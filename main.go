@@ -48,7 +48,7 @@ func main() {
 		}
 	}()
 
-	h := httpserver.New(st, httpserver.Assets())
+	h := httpserver.New(st, httpserver.Assets(), nil)
 	addr := ":" + cfg.HealthPort
 	log.Printf("listening on %s", addr)
 	if err := http.ListenAndServe(addr, h); err != nil {
