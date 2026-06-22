@@ -53,3 +53,38 @@ func TestLoadErrorsWhenNoReposConfigured(t *testing.T) {
 		t.Fatal("expected error when no REPOS and no projects file, got nil")
 	}
 }
+
+func TestLoadDigestConfig(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "tok")
+	t.Setenv("REPOS", "a/b")
+	t.Setenv("SLACK_BOT_TOKEN", "xoxb-1")
+	t.Setenv("DIGEST_CHANNEL_ID", "C999")
+	t.Setenv("STALE_PR_HOURS", "24")
+
+	c, err := Load("does-not-exist.json")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.SlackBotToken != "xoxb-1" {
+		t.Errorf("SlackBotToken = %q", c.SlackBotToken)
+	}
+	if c.DigestChannelID != "C999" {
+		t.Errorf("DigestChannelID = %q", c.DigestChannelID)
+	}
+	if c.StalePRHours != 24 {
+		t.Errorf("StalePRHours = %v, want 24", c.StalePRHours)
+	}
+}
+
+func TestLoadStalePRHoursDefault(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "tok")
+	t.Setenv("REPOS", "a/b")
+	t.Setenv("STALE_PR_HOURS", "")
+	c, err := Load("does-not-exist.json")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.StalePRHours != 48 {
+		t.Errorf("StalePRHours default = %v, want 48", c.StalePRHours)
+	}
+}

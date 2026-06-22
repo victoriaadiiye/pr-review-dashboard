@@ -2,6 +2,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"io/fs"
 	"net/http"
@@ -11,8 +12,26 @@ import (
 )
 
 // New returns the HTTP handler. assets is the built Vue dashboard filesystem.
-func New(st *store.Store, assets fs.FS) http.Handler {
+// runDigest triggers an on-demand Slack digest; pass nil to disable the route.
+func New(st *store.Store, assets fs.FS, runDigest func(context.Context) error) http.Handler {
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("/digest/run", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if runDigest == nil {
+			http.Error(w, "digest not configured", http.StatusServiceUnavailable)
+			return
+		}
+		if err := runDigest(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("digest sent"))
+	})
 
 	mux.HandleFunc("/api/leaderboard", func(w http.ResponseWriter, r *http.Request) {
 		window := r.URL.Query().Get("window")

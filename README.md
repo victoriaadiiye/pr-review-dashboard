@@ -52,6 +52,9 @@ a bare approve = 3.
 | `DB_PATH` | `/data/leaderboard.db` | SQLite file path. |
 | `POLL_INTERVAL` | `15m` | How often to poll GitHub. |
 | `HEALTH_PORT` | `8080` | Port for the dashboard + API + health check. |
+| `SLACK_BOT_TOKEN` | — | Bot token (`xoxb-…`) for the digest. Enables the digest when set with `DIGEST_CHANNEL_ID`. |
+| `DIGEST_CHANNEL_ID` | — | Channel ID the digest posts to. The bot must be invited to it. |
+| `STALE_PR_HOURS` | `48` | A PR awaiting review longer than this is flagged in the digest. |
 | `PTS_*`, `SUBSTANCE_CHARS` | see table | Scoring overrides. |
 
 Repos can be supplied either via `REPOS` or a `projects.json` file:
@@ -82,6 +85,24 @@ docker compose up -d --build
 
 The SQLite database persists on the mounted `/data` volume.
 
+## Slack digest
+
+A scheduled digest posts the weekly top-5 leaderboard plus PRs awaiting review
+longer than `STALE_PR_HOURS` to a Slack channel.
+
+- **Enable it:** set both `SLACK_BOT_TOKEN` and `DIGEST_CHANNEL_ID`. With either
+  unset the digest is off and the app logs `digest disabled` at startup.
+- **Slack app:** install from `slack-manifest.yaml` (send-only, scope
+  `chat:write`). Invite the bot to the target channel.
+- **Schedule:** daily at 09:00 Europe/Dublin (in-process ticker).
+- **Manual trigger:** `POST /digest/run` sends the digest immediately —
+  useful for testing without waiting for 09:00. Returns `503` when the digest
+  is not configured.
+
+```sh
+curl -X POST http://localhost:8080/digest/run
+```
+
 ## Development
 
 ```sh
@@ -96,7 +117,7 @@ only.
 
 ## Roadmap
 
-- **Phase 2** — scheduled Slack digest (top of the board + stale PRs).
+- **Phase 2** ✅ — scheduled Slack digest (top of the board + stale PRs). See [Slack digest](#slack-digest).
 - **Phase 3** — peer "👍 helpful" bonus via Slack reactions.
 - Real `/metrics` counters, closed-PR pruning, roster-leaver deactivation, and
   rendering team-requested reviewers as team chips.
