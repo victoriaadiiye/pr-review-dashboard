@@ -82,6 +82,10 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SQLite is a single-writer file engine. Serializing the connection pool to
+	// one connection prevents SQLITE_BUSY ("database is locked") when the poller
+	// writes while the digest scheduler and HTTP API read concurrently.
+	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
