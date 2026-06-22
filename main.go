@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"pr-review-dashboard/internal/config"
+	"pr-review-dashboard/internal/digest"
 	"pr-review-dashboard/internal/github"
 	"pr-review-dashboard/internal/httpserver"
 	"pr-review-dashboard/internal/poller"
@@ -48,7 +49,18 @@ func main() {
 		}
 	}()
 
-	h := httpserver.New(st, httpserver.Assets(), nil)
+	// Slack digest: enabled only when a bot token and channel are configured.
+	var runDigest func(context.Context) error
+	if cfg.SlackBotToken != "" && cfg.DigestChannelID != "" {
+		dg := digest.New(st, digest.NewSlackClient(cfg.SlackBotToken), cfg.DigestChannelID, cfg.StalePRHours)
+		runDigest = func(ctx context.Context) error { return dg.Run(ctx, time.Now()) }
+		go dg.RunScheduler(context.Background(), time.Now)
+		log.Printf("digest scheduler enabled for channel %s (09:00 Europe/Dublin)", cfg.DigestChannelID)
+	} else {
+		log.Print("digest disabled: set SLACK_BOT_TOKEN and DIGEST_CHANNEL_ID to enable")
+	}
+
+	h := httpserver.New(st, httpserver.Assets(), runDigest)
 	addr := ":" + cfg.HealthPort
 	log.Printf("listening on %s", addr)
 	if err := http.ListenAndServe(addr, h); err != nil {
