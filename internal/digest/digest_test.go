@@ -82,6 +82,8 @@ func TestIsAwaiting(t *testing.T) {
 		{"a pending reviewer", store.QueueRow{Reviewers: []store.QueueReviewer{{Login: "a", Status: "pending"}}}, true},
 		{"all approved", store.QueueRow{Reviewers: []store.QueueReviewer{{Login: "a", Status: "approved"}}}, false},
 		{"approved + pending", store.QueueRow{Reviewers: []store.QueueReviewer{{Login: "a", Status: "approved"}, {Login: "b", Status: "pending"}}}, true},
+		{"commented only", store.QueueRow{Reviewers: []store.QueueReviewer{{Login: "a", Status: "commented"}}}, true},
+		{"changes requested", store.QueueRow{Reviewers: []store.QueueReviewer{{Login: "a", Status: "changes"}}}, false},
 	}
 	for _, c := range cases {
 		if got := isAwaiting(c.row); got != c.want {

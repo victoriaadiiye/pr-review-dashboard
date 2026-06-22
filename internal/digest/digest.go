@@ -52,14 +52,16 @@ func (d *Digest) Run(ctx context.Context, now time.Time) error {
 // topN caps how many leaders the digest lists.
 const topN = 5
 
-// isAwaiting reports whether a queued PR still needs a review: it has no
-// reviewers yet, or at least one requested reviewer has not reviewed.
+// isAwaiting reports whether a queued PR still needs review: it has no
+// reviewers yet, or a requested reviewer has only left a comment or not
+// reviewed at all (status pending or commented). A PR with an approval or
+// changes-requested review is not awaiting.
 func isAwaiting(q store.QueueRow) bool {
 	if len(q.Reviewers) == 0 {
 		return true
 	}
 	for _, rv := range q.Reviewers {
-		if rv.Status == "pending" {
+		if rv.Status == "pending" || rv.Status == "commented" {
 			return true
 		}
 	}
