@@ -1,12 +1,76 @@
 package digest
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	"pr-review-dashboard/internal/store"
 )
+
+// mockSlack records the most recent PostMessage call.
+type mockSlack struct {
+	channel string
+	text    string
+	calls   int
+	err     error
+}
+
+func (m *mockSlack) PostMessage(_ context.Context, channel, text string) error {
+	m.calls++
+	m.channel = channel
+	m.text = text
+	return m.err
+}
+
+func TestRunPostsDigest(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	st.UpsertPerson(store.Person{Login: "alice", DisplayName: "Alice", Team: "member", Active: true})
+	st.UpsertReviewEvent(store.ReviewEvent{Repo: "acme/widgets", PRNumber: 1, Reviewer: "alice", State: "COMMENTED", Points: 4, RawHash: "h1", SubmittedAt: now})
+	// A stale PR: ready 72h ago, no reviews -> awaiting.
+	st.UpsertPR(store.PR{Repo: "acme/widgets", Number: 9, Title: "Stale one", Author: "carol", URL: "https://gh/9", IsDraft: false, ReadyAt: now.Add(-72 * time.Hour)})
+
+	m := &mockSlack{}
+	d := New(st, m, "C123", 48)
+	if err := d.Run(context.Background(), now); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if m.calls != 1 {
+		t.Fatalf("PostMessage calls = %d, want 1", m.calls)
+	}
+	if m.channel != "C123" {
+		t.Errorf("channel = %q, want C123", m.channel)
+	}
+	if !strings.Contains(m.text, "Alice") || !strings.Contains(m.text, "acme/widgets#9") {
+		t.Errorf("digest text missing expected content:\n%s", m.text)
+	}
+}
+
+func TestRunAllCaughtUp(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	now := time.Now()
+	st.UpsertPerson(store.Person{Login: "alice", DisplayName: "Alice", Team: "member", Active: true})
+
+	m := &mockSlack{}
+	d := New(st, m, "C123", 48)
+	if err := d.Run(context.Background(), now); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(m.text, "No PRs waiting") {
+		t.Errorf("expected all-caught-up text, got:\n%s", m.text)
+	}
+}
 
 func TestIsAwaiting(t *testing.T) {
 	cases := []struct {

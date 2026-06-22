@@ -2,12 +2,51 @@
 package digest
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
 	"pr-review-dashboard/internal/store"
 )
+
+// SlackAPI is the send-only Slack surface the digest needs.
+type SlackAPI interface {
+	PostMessage(ctx context.Context, channel, text string) error
+}
+
+// Digest builds the weekly digest from the store and posts it to Slack.
+type Digest struct {
+	store      *store.Store
+	slack      SlackAPI
+	channel    string
+	staleHours float64
+}
+
+// New constructs a Digest. channel is the Slack channel ID; staleHours is the
+// age threshold for flagging a PR as awaiting review.
+func New(st *store.Store, slack SlackAPI, channel string, staleHours float64) *Digest {
+	return &Digest{store: st, slack: slack, channel: channel, staleHours: staleHours}
+}
+
+// Run builds the digest for the given instant and posts it to Slack.
+func (d *Digest) Run(ctx context.Context, now time.Time) error {
+	leaders, err := d.store.Leaderboard("week", now)
+	if err != nil {
+		return fmt.Errorf("leaderboard: %w", err)
+	}
+	queue, err := d.store.Queue(now)
+	if err != nil {
+		return fmt.Errorf("queue: %w", err)
+	}
+	var stale []store.QueueRow
+	for _, q := range queue {
+		if q.AgeHours > d.staleHours && isAwaiting(q) {
+			stale = append(stale, q)
+		}
+	}
+	return d.slack.PostMessage(ctx, d.channel, BuildMessage(leaders, stale, now, d.staleHours))
+}
 
 // topN caps how many leaders the digest lists.
 const topN = 5
