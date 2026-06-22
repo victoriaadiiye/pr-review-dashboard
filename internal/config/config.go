@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,13 +15,16 @@ import (
 
 // Config is the resolved runtime configuration.
 type Config struct {
-	GitHubToken  string
-	RosterTeam   string
-	DBPath       string
-	Repos        []string
-	PollInterval time.Duration
-	HealthPort   string
-	Weights      scorer.Weights
+	GitHubToken     string
+	RosterTeam      string
+	DBPath          string
+	Repos           []string
+	PollInterval    time.Duration
+	HealthPort      string
+	Weights         scorer.Weights
+	SlackBotToken   string
+	DigestChannelID string
+	StalePRHours    float64
 }
 
 type projectsFile struct {
@@ -33,12 +37,15 @@ type projectsFile struct {
 // roster sync.
 func Load(projectsPath string) (Config, error) {
 	c := Config{
-		GitHubToken:  firstNonEmpty(os.Getenv("GITHUB_TOKEN"), os.Getenv("GH_TOKEN")),
-		RosterTeam:   os.Getenv("ROSTER_TEAM"),
-		DBPath:       envOr("DB_PATH", "/data/leaderboard.db"),
-		HealthPort:   envOr("HEALTH_PORT", "8080"),
-		PollInterval: durationOr("POLL_INTERVAL", 15*time.Minute),
-		Weights:      scorer.Default(),
+		GitHubToken:     firstNonEmpty(os.Getenv("GITHUB_TOKEN"), os.Getenv("GH_TOKEN")),
+		RosterTeam:      os.Getenv("ROSTER_TEAM"),
+		DBPath:          envOr("DB_PATH", "/data/leaderboard.db"),
+		HealthPort:      envOr("HEALTH_PORT", "8080"),
+		PollInterval:    durationOr("POLL_INTERVAL", 15*time.Minute),
+		Weights:         scorer.Default(),
+		SlackBotToken:   os.Getenv("SLACK_BOT_TOKEN"),
+		DigestChannelID: os.Getenv("DIGEST_CHANNEL_ID"),
+		StalePRHours:    floatOr("STALE_PR_HOURS", 48),
 	}
 	// REPOS env var takes precedence over the projects file.
 	if repos := parseRepos(os.Getenv("REPOS")); len(repos) > 0 {
@@ -95,6 +102,15 @@ func durationOr(key string, def time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
+		}
+	}
+	return def
+}
+
+func floatOr(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return def
