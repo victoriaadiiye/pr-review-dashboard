@@ -1,0 +1,10 @@
+.env
+*.db
+/data/
+/pr-review-dashboard
+.wolf/
+.claude/
+.superpowers/
+web/node_modules/
+projects.json
+web/node_modules/

@@ -1,0 +1,9 @@
+services:
+  dashboard:
+    build: .
+    env_file: .env
+    volumes:
+      - ${HOST_HOME:-/home/youruser}/.pr-review-dashboard:/data
+    ports:
+      - "${HEALTH_PORT:-8080}:8080"
+    restart: unless-stopped

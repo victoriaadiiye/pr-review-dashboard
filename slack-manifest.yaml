@@ -1,0 +1,22 @@
+_metadata:
+  major_version: 1
+
+display_information:
+  name: Review Leaderboard
+  description: Posts PR-review leaderboard digests and stale-PR reminders
+
+features:
+  bot_user:
+    display_name: review-leaderboard
+    always_online: false
+
+oauth_config:
+  scopes:
+    bot:
+      - chat:write       # post the digest
+      - channels:read    # resolve channel by name
+
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false      # send-only — no events to receive
+  token_rotation_enabled: false
