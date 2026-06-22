@@ -4,6 +4,7 @@ package digest
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -103,4 +104,45 @@ func BuildMessage(leaders []store.LeaderRow, stale []store.QueueRow, now time.Ti
 			q.Repo, q.PRNumber, name, q.Author, int(q.AgeHours), q.URL)
 	}
 	return b.String()
+}
+
+// dublin returns the Europe/Dublin location, falling back to UTC if the tzdata
+// is unavailable.
+func dublin() *time.Location {
+	loc, err := time.LoadLocation("Europe/Dublin")
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
+// nextNineAM returns the next 09:00 in loc strictly after now.
+func nextNineAM(now time.Time, loc *time.Location) time.Time {
+	n := now.In(loc)
+	next := time.Date(n.Year(), n.Month(), n.Day(), 9, 0, 0, 0, loc)
+	if !next.After(n) {
+		next = next.AddDate(0, 0, 1)
+	}
+	return next
+}
+
+// RunScheduler blocks, firing Run once per day at 09:00 Europe/Dublin until ctx
+// is cancelled. nowFn supplies the current time (injectable for tests).
+func (d *Digest) RunScheduler(ctx context.Context, nowFn func() time.Time) {
+	loc := dublin()
+	for {
+		wait := nextNineAM(nowFn(), loc).Sub(nowFn())
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			rctx, cancel := context.WithTimeout(ctx, time.Minute)
+			if err := d.Run(rctx, nowFn()); err != nil {
+				log.Printf("digest run: %v", err)
+			}
+			cancel()
+		}
+	}
 }

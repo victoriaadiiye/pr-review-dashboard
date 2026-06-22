@@ -125,3 +125,36 @@ func TestBuildMessageNoReviews(t *testing.T) {
 		t.Errorf("expected no-reviews line, got:\n%s", msg)
 	}
 }
+
+func TestNextNineAM(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Dublin")
+	if err != nil {
+		t.Fatalf("load loc: %v", err)
+	}
+	cases := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{
+			"before 9am same day",
+			time.Date(2026, 6, 22, 7, 30, 0, 0, loc),
+			time.Date(2026, 6, 22, 9, 0, 0, 0, loc),
+		},
+		{
+			"after 9am rolls to tomorrow",
+			time.Date(2026, 6, 22, 10, 0, 0, 0, loc),
+			time.Date(2026, 6, 23, 9, 0, 0, 0, loc),
+		},
+		{
+			"exactly 9am rolls to tomorrow",
+			time.Date(2026, 6, 22, 9, 0, 0, 0, loc),
+			time.Date(2026, 6, 23, 9, 0, 0, 0, loc),
+		},
+	}
+	for _, c := range cases {
+		if got := nextNineAM(c.now, loc); !got.Equal(c.want) {
+			t.Errorf("%s: nextNineAM = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
