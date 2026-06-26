@@ -2,6 +2,7 @@
 import { ref, onMounted, watch, computed } from 'vue'
 import Leaderboard from './components/Leaderboard.vue'
 import Queue from './components/Queue.vue'
+import History from './components/History.vue'
 
 const windows = [
   { key: 'week', label: 'Week' },
@@ -13,7 +14,11 @@ const activeWindow = ref<'week' | 'month' | 'all'>('week')
 const board = ref<any[]>([])
 const queue = ref<any[]>([])
 const error = ref<string>('')
-const view = ref<'leaderboard' | 'queue'>('leaderboard')
+const view = ref<'leaderboard' | 'queue' | 'history'>('leaderboard')
+const history = ref<any[]>([])
+const reviewers = ref<string[]>([])
+const historyReviewer = ref<string>('')
+const historyWindow = ref<'week' | 'month' | 'all'>('all')
 
 const windowLabel = computed(() => windows.find((w) => w.key === activeWindow.value)?.label ?? '')
 
@@ -37,11 +42,33 @@ async function loadQueue() {
     error.value = e instanceof Error ? e.message : 'Failed to load queue'
   }
 }
+async function loadHistory() {
+  try {
+    const res = await fetch(`/api/history?window=${historyWindow.value}&reviewer=${encodeURIComponent(historyReviewer.value)}`)
+    if (!res.ok) throw new Error(`history: HTTP ${res.status}`)
+    history.value = await res.json()
+    error.value = ''
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to load history'
+  }
+}
+async function loadReviewers() {
+  try {
+    const res = await fetch('/api/reviewers')
+    if (!res.ok) throw new Error(`reviewers: HTTP ${res.status}`)
+    reviewers.value = await res.json()
+  } catch {
+    reviewers.value = []
+  }
+}
 onMounted(() => {
   loadBoard()
   loadQueue()
+  loadHistory()
+  loadReviewers()
 })
 watch(activeWindow, loadBoard)
+watch([historyWindow, historyReviewer], loadHistory)
 </script>
 
 <template>
@@ -61,6 +88,9 @@ watch(activeWindow, loadBoard)
         <button role="tab" :aria-selected="view === 'queue'"
           :class="{ seg__opt: true, 'seg__opt--on': view === 'queue' }"
           @click="view = 'queue'">Review queue</button>
+        <button role="tab" :aria-selected="view === 'history'"
+          :class="{ seg__opt: true, 'seg__opt--on': view === 'history' }"
+          @click="view = 'history'">History</button>
       </div>
     </header>
 
@@ -91,12 +121,34 @@ watch(activeWindow, loadBoard)
       </section>
     </template>
 
-    <section v-else class="queue-view">
+    <section v-else-if="view === 'queue'" class="queue-view">
       <div class="card__head bare">
         <h2>Ready for review</h2>
         <span class="card__meta">{{ queue.length }} open</span>
       </div>
       <Queue :rows="queue" />
+    </section>
+
+    <section v-else class="history-view">
+      <div class="history-controls">
+        <select v-model="historyReviewer" class="reviewer-select" aria-label="Filter by reviewer">
+          <option value="">All reviewers</option>
+          <option v-for="rv in reviewers" :key="rv" :value="rv">{{ rv }}</option>
+        </select>
+        <div class="seg" role="tablist" aria-label="History window">
+          <button v-for="w in windows" :key="w.key" role="tab"
+            :aria-selected="historyWindow === w.key"
+            :class="{ seg__opt: true, 'seg__opt--on': historyWindow === w.key }"
+            @click="historyWindow = w.key">{{ w.label }}</button>
+        </div>
+      </div>
+      <section class="card">
+        <div class="card__head">
+          <h2>Review history</h2>
+          <span class="card__meta">{{ history.length }} rows</span>
+        </div>
+        <History :rows="history" />
+      </section>
     </section>
 
     <footer class="foot">Updated continuously · scored at merge</footer>
@@ -179,6 +231,23 @@ h1 {
 .leaderboard-controls {
   display: flex;
   justify-content: flex-end;
+}
+
+.history-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-s);
+  flex-wrap: wrap;
+}
+.reviewer-select {
+  font: inherit;
+  font-size: var(--step--1);
+  color: var(--fg);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 5px 12px;
 }
 
 .card {
