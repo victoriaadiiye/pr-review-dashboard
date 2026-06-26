@@ -38,6 +38,10 @@ GitHub GraphQL ─────────┤                                   
 - **Merge scanner** — runs inside the poll loop each cycle; scores merged PRs.
   First scan backfills `BACKFILL_DAYS` days (default 30); subsequent scans are
   incremental from a per-repo high-water mark. Disabled when `BACKFILL_DAYS=0`.
+  > **Large first backfills:** A large repository or `BACKFILL_DAYS` value may
+  > span several poll cycles to complete. Each cycle resumes safely — the
+  > high-water mark advances only after a scan finishes — so the board fills
+  > in incrementally.
 - **Webhook** — an **optional** alternate scoring trigger; activated only when
   `WEBHOOK_SECRET` is set. Verifies HMAC-SHA256 on each GitHub delivery and
   scores the merged PR immediately. Disabled (returns 503) when secret is unset.
