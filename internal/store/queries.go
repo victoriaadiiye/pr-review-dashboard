@@ -20,8 +20,9 @@ type LeaderRow struct {
 
 // QueueReviewer is a reviewer's status on a queued PR.
 type QueueReviewer struct {
-	Login  string `json:"login"`
-	Status string `json:"status"` // approved | commented | changes | pending
+	Login       string `json:"login"`
+	Status      string `json:"status"` // approved | commented | changes | pending
+	ReRequested bool   `json:"re_requested"`
 }
 
 // QueueRow is one PR awaiting review.
