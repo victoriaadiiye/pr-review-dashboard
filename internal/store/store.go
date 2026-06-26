@@ -24,6 +24,7 @@ type ReviewEvent struct {
 	BodyLen        int
 	SubmittedAt    time.Time
 	Points         int
+	HasImage       bool
 	RawHash        string
 }
 
@@ -73,6 +74,15 @@ CREATE TABLE IF NOT EXISTS review_events (
   raw_hash TEXT UNIQUE
 );
 CREATE INDEX IF NOT EXISTS idx_events_submitted ON review_events(submitted_at);
+CREATE TABLE IF NOT EXISTS comment_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo TEXT, pr_number INTEGER,
+  author TEXT, kind TEXT,
+  body_len INTEGER, has_image INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT, points INTEGER,
+  raw_hash TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_comment_created ON comment_events(created_at);
 `
 
 // Open opens (or creates) the database at path and applies the schema.
@@ -90,6 +100,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
 }
 
@@ -103,15 +117,40 @@ func tsOrEmpty(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// UpsertReviewEvent inserts the event, or updates points if raw_hash already exists.
+// UpsertReviewEvent inserts the event, or updates points/has_image if raw_hash exists.
 func (s *Store) UpsertReviewEvent(e ReviewEvent) error {
 	_, err := s.db.Exec(`
 INSERT INTO review_events
-  (repo, pr_number, reviewer, state, inline_comment_count, body_len, submitted_at, points, raw_hash)
-VALUES (?,?,?,?,?,?,?,?,?)
-ON CONFLICT(raw_hash) DO UPDATE SET points=excluded.points`,
+  (repo, pr_number, reviewer, state, inline_comment_count, body_len, submitted_at, points, has_image, raw_hash)
+VALUES (?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(raw_hash) DO UPDATE SET points=excluded.points, has_image=excluded.has_image`,
 		e.Repo, e.PRNumber, e.Reviewer, e.State, e.InlineComments, e.BodyLen,
-		tsOrEmpty(e.SubmittedAt), e.Points, e.RawHash)
+		tsOrEmpty(e.SubmittedAt), e.Points, boolToInt(e.HasImage), e.RawHash)
+	return err
+}
+
+// CommentEvent is one standalone PR comment, already scored.
+type CommentEvent struct {
+	Repo      string
+	PRNumber  int
+	Author    string
+	Kind      string // "issue"
+	BodyLen   int
+	HasImage  bool
+	CreatedAt time.Time
+	Points    int
+	RawHash   string
+}
+
+// UpsertCommentEvent inserts the comment, or updates points/has_image if raw_hash exists.
+func (s *Store) UpsertCommentEvent(e CommentEvent) error {
+	_, err := s.db.Exec(`
+INSERT INTO comment_events
+  (repo, pr_number, author, kind, body_len, has_image, created_at, points, raw_hash)
+VALUES (?,?,?,?,?,?,?,?,?)
+ON CONFLICT(raw_hash) DO UPDATE SET points=excluded.points, has_image=excluded.has_image`,
+		e.Repo, e.PRNumber, e.Author, e.Kind, e.BodyLen, boolToInt(e.HasImage),
+		tsOrEmpty(e.CreatedAt), e.Points, e.RawHash)
 	return err
 }
 
@@ -160,4 +199,39 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// migrate applies idempotent schema upgrades to a pre-existing database. New
+// databases already have the columns from schema; this only adds what older
+// ones lack. ADD COLUMN is guarded by a table_info check because SQLite has no
+// ADD COLUMN IF NOT EXISTS.
+func migrate(db *sql.DB) error {
+	if !hasColumn(db, "review_events", "has_image") {
+		if _, err := db.Exec(`ALTER TABLE review_events ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func hasColumn(db *sql.DB, table, col string) bool {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, ctype      string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false
+		}
+		if name == col {
+			return true
+		}
+	}
+	return false
 }
