@@ -9,9 +9,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"pr-review-dashboard/internal/github"
+	"pr-review-dashboard/internal/ingest"
 	"pr-review-dashboard/internal/scorer"
 	"pr-review-dashboard/internal/store"
 )
@@ -48,87 +48,56 @@ func post(t *testing.T, h http.Handler, event, sig string, body []byte) *httptes
 
 const mergedBody = `{"action":"closed","pull_request":{"number":42,"merged":true},"repository":{"full_name":"acme/widgets"}}`
 
-func newStore(t *testing.T) *store.Store {
+func newHandler(t *testing.T, secret string, f *fakeFetcher) http.Handler {
 	t.Helper()
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return st
+	return New(secret, ingest.New(f, st, scorer.Default()))
 }
 
-func TestMergedEventScoresAndPersists(t *testing.T) {
-	st := newStore(t)
-	f := &fakeFetcher{detail: github.FetchedPRDetail{
-		Number: 42, Author: "carol",
-		Reviews: []github.FetchedReview{
-			{ID: "R1", Author: "alice", State: "CHANGES_REQUESTED", Body: strings.Repeat("x", 300), InlineComments: 0},
-		},
-		Comments: []github.FetchedComment{
-			{ID: "C1", Author: "bob", Body: "great"},
-			{ID: "C2", Author: "carol", Body: "self comment ignored"}, // self -> 0, still stored
-		},
-	}}
-	h := New("sekret", f, st, scorer.Default())
-
+func TestMergedEventDelegatesToIngest(t *testing.T) {
+	f := &fakeFetcher{detail: github.FetchedPRDetail{Number: 42, Author: "carol"}}
+	h := newHandler(t, "sekret", f)
 	body := []byte(mergedBody)
 	rec := post(t, h, "pull_request", sign("sekret", body), body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if f.calls != 1 {
-		t.Errorf("fetcher calls = %d, want 1", f.calls)
-	}
-
-	st.UpsertPerson(store.Person{Login: "alice", Team: "member", Active: true})
-	board, _ := st.Leaderboard("all", timeNowUTC())
-	pts := map[string]int{}
-	for _, r := range board {
-		pts[r.Login] = r.Points
-	}
-	if pts["alice"] != 7 { // CHANGES(2+3) + substance(2)
-		t.Errorf("alice points = %d, want 7", pts["alice"])
-	}
-	if pts["bob"] != 1 { // comment base
-		t.Errorf("bob points = %d, want 1", pts["bob"])
+		t.Errorf("fetcher calls = %d, want 1 (delegated to ingest)", f.calls)
 	}
 }
 
 func TestBadSignatureRejected(t *testing.T) {
-	st := newStore(t)
-	h := New("sekret", &fakeFetcher{}, st, scorer.Default())
+	h := newHandler(t, "sekret", &fakeFetcher{})
 	body := []byte(mergedBody)
-	rec := post(t, h, "pull_request", "sha256=deadbeef", body)
-	if rec.Code != http.StatusUnauthorized {
+	if rec := post(t, h, "pull_request", "sha256=deadbeef", body); rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", rec.Code)
 	}
 }
 
 func TestMissingSignatureRejected(t *testing.T) {
-	st := newStore(t)
-	h := New("sekret", &fakeFetcher{}, st, scorer.Default())
+	h := newHandler(t, "sekret", &fakeFetcher{})
 	body := []byte(mergedBody)
-	rec := post(t, h, "pull_request", "", body)
-	if rec.Code != http.StatusUnauthorized {
+	if rec := post(t, h, "pull_request", "", body); rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", rec.Code)
 	}
 }
 
 func TestDisabledWhenNoSecret(t *testing.T) {
-	st := newStore(t)
-	h := New("", &fakeFetcher{}, st, scorer.Default())
+	h := newHandler(t, "", &fakeFetcher{})
 	body := []byte(mergedBody)
-	rec := post(t, h, "pull_request", "", body)
-	if rec.Code != http.StatusServiceUnavailable {
+	if rec := post(t, h, "pull_request", "", body); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", rec.Code)
 	}
 }
 
 func TestNonMergeEventIgnored(t *testing.T) {
-	st := newStore(t)
 	f := &fakeFetcher{}
-	h := New("sekret", f, st, scorer.Default())
+	h := newHandler(t, "sekret", f)
 	body := []byte(`{"action":"opened","pull_request":{"number":1,"merged":false},"repository":{"full_name":"acme/widgets"}}`)
 	rec := post(t, h, "pull_request", sign("sekret", body), body)
 	if rec.Code != http.StatusNoContent {
@@ -140,54 +109,9 @@ func TestNonMergeEventIgnored(t *testing.T) {
 }
 
 func TestNonPREventIgnored(t *testing.T) {
-	st := newStore(t)
-	h := New("sekret", &fakeFetcher{}, st, scorer.Default())
+	h := newHandler(t, "sekret", &fakeFetcher{})
 	body := []byte(`{}`)
-	rec := post(t, h, "push", sign("sekret", body), body)
-	if rec.Code != http.StatusNoContent {
+	if rec := post(t, h, "push", sign("sekret", body), body); rec.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want 204", rec.Code)
 	}
 }
-
-func TestEmptyAuthorEventsNotPersisted(t *testing.T) {
-	st := newStore(t)
-	f := &fakeFetcher{detail: github.FetchedPRDetail{
-		Number: 42, Author: "carol",
-		Reviews: []github.FetchedReview{
-			{ID: "R1", Author: "", State: "APPROVED", Body: "empty author review"},
-			{ID: "R2", Author: "alice", State: "APPROVED", Body: "real author review"},
-		},
-		Comments: []github.FetchedComment{
-			{ID: "C1", Author: "", Body: "empty author comment"},
-			{ID: "C2", Author: "bob", Body: "real author comment"},
-		},
-	}}
-	h := New("sekret", f, st, scorer.Default())
-
-	body := []byte(mergedBody)
-	rec := post(t, h, "pull_request", sign("sekret", body), body)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-
-	st.UpsertPerson(store.Person{Login: "alice", Team: "member", Active: true})
-	st.UpsertPerson(store.Person{Login: "bob", Team: "member", Active: true})
-	board, _ := st.Leaderboard("all", timeNowUTC())
-	pts := map[string]int{}
-	for _, r := range board {
-		pts[r.Login] = r.Points
-	}
-
-	if pts["alice"] != 4 { // APPROVED (2+1) + message-bump (1)
-		t.Errorf("alice points = %d, want 4", pts["alice"])
-	}
-	if pts["bob"] != 1 { // comment base = 1
-		t.Errorf("bob points = %d, want 1", pts["bob"])
-	}
-	// Verify no empty-author rows exist; if they did, there would be a row with 0 points
-	if len(board) != 2 {
-		t.Errorf("leaderboard size = %d, want 2 (alice + bob, no empty-author rows)", len(board))
-	}
-}
-
-func timeNowUTC() time.Time { return time.Now().UTC() }

@@ -12,6 +12,7 @@ import (
 	"pr-review-dashboard/internal/digest"
 	"pr-review-dashboard/internal/github"
 	"pr-review-dashboard/internal/httpserver"
+	"pr-review-dashboard/internal/ingest"
 	"pr-review-dashboard/internal/poller"
 	"pr-review-dashboard/internal/store"
 	"pr-review-dashboard/internal/webhook"
@@ -31,7 +32,10 @@ func main() {
 	}
 	defer st.Close()
 
-	p := poller.New(github.NewClient(cfg.GitHubToken), st)
+	gh := github.NewClient(cfg.GitHubToken)
+	ing := ingest.New(gh, st, cfg.Weights)
+
+	p := poller.New(gh, st)
 
 	// Background sync loop.
 	go func() {
@@ -64,7 +68,7 @@ func main() {
 	// GitHub merge webhook: enabled only when a secret is configured.
 	var webhookHandler http.Handler
 	if cfg.WebhookSecret != "" {
-		webhookHandler = webhook.New(cfg.WebhookSecret, github.NewClient(cfg.GitHubToken), st, cfg.Weights)
+		webhookHandler = webhook.New(cfg.WebhookSecret, ing)
 		log.Print("webhook enabled at POST /webhook/github")
 	} else {
 		log.Print("webhook disabled: set WEBHOOK_SECRET to enable")
