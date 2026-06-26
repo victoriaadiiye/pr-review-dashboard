@@ -13,6 +13,7 @@ import (
 	"pr-review-dashboard/internal/github"
 	"pr-review-dashboard/internal/httpserver"
 	"pr-review-dashboard/internal/ingest"
+	"pr-review-dashboard/internal/mergescan"
 	"pr-review-dashboard/internal/poller"
 	"pr-review-dashboard/internal/store"
 	"pr-review-dashboard/internal/webhook"
@@ -34,6 +35,12 @@ func main() {
 
 	gh := github.NewClient(cfg.GitHubToken)
 	ing := ingest.New(gh, st, cfg.Weights)
+	scanner := mergescan.New(gh, ing, st, cfg.BackfillDays)
+	if cfg.BackfillDays > 0 {
+		log.Printf("merge scan enabled: first run backfills %d days, then incremental", cfg.BackfillDays)
+	} else {
+		log.Print("merge scan disabled: set BACKFILL_DAYS > 0 to enable")
+	}
 
 	p := poller.New(gh, st)
 
@@ -47,6 +54,9 @@ func main() {
 			for _, repo := range cfg.Repos {
 				if err := p.SyncRepo(ctx, repo); err != nil {
 					log.Printf("repo sync %s: %v", repo, err)
+				}
+				if err := scanner.ScanRepo(ctx, repo, time.Now()); err != nil {
+					log.Printf("merge scan %s: %v", repo, err)
 				}
 			}
 			cancel()
