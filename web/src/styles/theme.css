@@ -1,0 +1,142 @@
+/*
+ * Theme — ported from the qompass UI design system (nexus theme).
+ * Source: ~/projects/qompass/web/static/css/global/{qumulo-palette,tokens,reset}.css
+ *
+ * The dashboard ships as a single offline binary, so this is a self-contained
+ * copy of the Qumulo palette + the nexus semantic-token mapping (navy
+ * "blackberry" surfaces, teal "agave" accent, light-gray "lychee" text). Keep
+ * in sync manually if the upstream palette changes.
+ */
+
+:root {
+  /* ── Qumulo palette (subset used here) ─────────────────── */
+  --q-agave-500: hsl(192 100% 40%);
+  --q-agave-400: hsl(192 85% 56%);
+
+  --q-blackberry-950: hsl(213 22% 10%);
+  --q-blackberry-900: hsl(212 22% 14%);
+  --q-blackberry-850: hsl(213 23% 16%);
+  --q-blackberry-750: hsl(210 26% 21%);
+  --q-blackberry-700: hsl(209 27% 24%);
+  --q-blackberry-600: hsl(211 19% 38%);
+  --q-blackberry-500: hsl(214 13% 55%);
+
+  --q-lychee-50: hsl(180 4% 95%);
+  --q-lychee-300: hsl(204 5% 79%);
+  --q-lychee-400: hsl(210 5% 67%);
+
+  --q-mint-400: hsl(150 53% 56%);
+  --q-kumquat-400: hsl(36 100% 50%);
+  --q-pomegranate-400: hsl(355 100% 74%);
+  --q-pomegranate-500: hsl(355 100% 64%);
+  --q-eggplant-400: hsl(246 54% 73%);
+  --q-banana-400: hsl(52 100% 40%);
+
+  /* ── Fluid type scale (Utopia: 320→1240px, 16→20px) ────── */
+  --step--2: clamp(0.6944rem, 0.6637rem + 0.1538vw, 0.8rem);
+  --step--1: clamp(0.8333rem, 0.7809rem + 0.2621vw, 1rem);
+  --step-0: clamp(1rem, 0.9185rem + 0.4076vw, 1.25rem);
+  --step-1: clamp(1.2rem, 1.0793rem + 0.6033vw, 1.5625rem);
+  --step-2: clamp(1.44rem, 1.2658rem + 0.871vw, 1.9531rem);
+  --step-3: clamp(1.728rem, 1.4812rem + 1.234vw, 2.4414rem);
+
+  /* ── Fluid space scale ─────────────────────────────────── */
+  --space-3xs: clamp(0.25rem, 0.2283rem + 0.1087vw, 0.3125rem);
+  --space-2xs: clamp(0.5rem, 0.4565rem + 0.2174vw, 0.625rem);
+  --space-xs: clamp(0.75rem, 0.6848rem + 0.3261vw, 0.9375rem);
+  --space-s: clamp(1rem, 0.913rem + 0.4348vw, 1.25rem);
+  --space-m: clamp(1.5rem, 1.3696rem + 0.6522vw, 1.875rem);
+  --space-l: clamp(2rem, 1.8261rem + 0.8696vw, 2.5rem);
+  --space-xl: clamp(3rem, 2.7391rem + 1.3043vw, 3.75rem);
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-pill: 9999px;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+
+  --motion-fast: 140ms;
+  --motion-ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── nexus semantic tokens (qompass default theme) ─────── */
+  --bg-page: var(--q-blackberry-950);
+  --bg-panel: var(--q-blackberry-900);
+  --bg-card: var(--q-blackberry-850);
+  --bg-sub: var(--q-blackberry-750);
+  --bg-row: var(--q-blackberry-900);
+  --bg-row-hover: color-mix(in srgb, var(--q-agave-400) 8%, var(--q-blackberry-700));
+
+  --border-subtle: var(--q-blackberry-700);
+  --border: var(--q-blackberry-600);
+  --border-strong: var(--q-blackberry-500);
+
+  --fg: var(--q-lychee-50);
+  --fg-strong: #ffffff;
+  --fg-muted: var(--q-lychee-300);
+  --fg-subtle: var(--q-lychee-400);
+
+  --accent: var(--q-agave-400);
+  --accent-strong: var(--q-agave-500);
+  --accent-bg: color-mix(in srgb, var(--q-agave-400) 14%, transparent);
+
+  --ok: var(--q-mint-400);
+  --ok-bg: color-mix(in srgb, var(--q-mint-400) 14%, transparent);
+  --warn: var(--q-kumquat-400);
+  --warn-bg: color-mix(in srgb, var(--q-kumquat-400) 16%, transparent);
+  --err: var(--q-pomegranate-400);
+  --err-bg: color-mix(in srgb, var(--q-pomegranate-400) 16%, transparent);
+
+  --gold: var(--q-banana-400);
+  --tone-comment: var(--q-eggplant-400);
+
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.18);
+
+  color-scheme: dark;
+}
+
+/* ── Base reset (from qompass reset.css) ─────────────────── */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-page);
+  color: var(--fg);
+  line-height: 1.5;
+  font-size: var(--step--1);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
