@@ -13,6 +13,7 @@ const activeWindow = ref<'week' | 'month' | 'all'>('week')
 const board = ref<any[]>([])
 const queue = ref<any[]>([])
 const error = ref<string>('')
+const view = ref<'leaderboard' | 'queue'>('leaderboard')
 
 const windowLabel = computed(() => windows.find((w) => w.key === activeWindow.value)?.label ?? '')
 
@@ -53,32 +54,45 @@ watch(activeWindow, loadBoard)
           <p class="tagline">Review work, scored on merge — quality over volume.</p>
         </div>
       </div>
-      <div class="seg" role="tablist" aria-label="Leaderboard window">
-        <button
-          v-for="w in windows"
-          :key="w.key"
-          role="tab"
-          :aria-selected="activeWindow === w.key"
-          :class="{ 'seg__opt': true, 'seg__opt--on': activeWindow === w.key }"
-          @click="activeWindow = w.key"
-        >
-          {{ w.label }}
-        </button>
+      <div class="seg" role="tablist" aria-label="View">
+        <button role="tab" :aria-selected="view === 'leaderboard'"
+          :class="{ seg__opt: true, 'seg__opt--on': view === 'leaderboard' }"
+          @click="view = 'leaderboard'">Leaderboard</button>
+        <button role="tab" :aria-selected="view === 'queue'"
+          :class="{ seg__opt: true, 'seg__opt--on': view === 'queue' }"
+          @click="view = 'queue'">Review queue</button>
       </div>
     </header>
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
 
-    <section class="card">
-      <div class="card__head">
-        <h2>Top reviewers</h2>
-        <span class="card__meta">{{ windowLabel }}</span>
+    <template v-if="view === 'leaderboard'">
+      <div class="leaderboard-controls">
+        <div class="seg" role="tablist" aria-label="Leaderboard window">
+          <button
+            v-for="w in windows"
+            :key="w.key"
+            role="tab"
+            :aria-selected="activeWindow === w.key"
+            :class="{ 'seg__opt': true, 'seg__opt--on': activeWindow === w.key }"
+            @click="activeWindow = w.key"
+          >
+            {{ w.label }}
+          </button>
+        </div>
       </div>
-      <Leaderboard :rows="board" />
-    </section>
 
-    <section class="card">
-      <div class="card__head">
+      <section class="card">
+        <div class="card__head">
+          <h2>Top reviewers</h2>
+          <span class="card__meta">{{ windowLabel }}</span>
+        </div>
+        <Leaderboard :rows="board" />
+      </section>
+    </template>
+
+    <section v-else class="queue-view">
+      <div class="card__head bare">
         <h2>Ready for review</h2>
         <span class="card__meta">{{ queue.length }} open</span>
       </div>
@@ -162,6 +176,11 @@ h1 {
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
+.leaderboard-controls {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
@@ -175,6 +194,11 @@ h1 {
   justify-content: space-between;
   padding: var(--space-s) var(--space-m);
   border-bottom: 1px solid var(--border-subtle);
+}
+.card__head.bare {
+  border-bottom: none;
+  padding-left: 0;
+  padding-right: 0;
 }
 .card__head h2 {
   font-size: var(--step-0);
