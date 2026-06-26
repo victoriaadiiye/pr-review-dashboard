@@ -15,6 +15,20 @@ const queue = ref<any[]>([])
 const error = ref<string>('')
 const view = ref<'leaderboard' | 'queue'>('leaderboard')
 
+// Themes mirror qompass: nexus (navy/teal), graphite (cool dark), paper (light).
+// The initial theme is set pre-paint by the inline script in index.html.
+const themes = [
+  { key: 'nexus', label: 'Nexus' },
+  { key: 'dark', label: 'Graphite' },
+  { key: 'light', label: 'Paper' },
+] as const
+const theme = ref<string>(document.documentElement.dataset.theme || 'nexus')
+function setTheme(t: string) {
+  theme.value = t
+  document.documentElement.dataset.theme = t
+  localStorage.setItem('theme', t)
+}
+
 const windowLabel = computed(() => windows.find((w) => w.key === activeWindow.value)?.label ?? '')
 
 async function loadBoard() {
@@ -54,13 +68,21 @@ watch(activeWindow, loadBoard)
           <p class="tagline">Review work, scored on merge — quality over volume.</p>
         </div>
       </div>
-      <div class="seg" role="tablist" aria-label="View">
-        <button role="tab" :aria-selected="view === 'leaderboard'"
-          :class="{ seg__opt: true, 'seg__opt--on': view === 'leaderboard' }"
-          @click="view = 'leaderboard'">Leaderboard</button>
-        <button role="tab" :aria-selected="view === 'queue'"
-          :class="{ seg__opt: true, 'seg__opt--on': view === 'queue' }"
-          @click="view = 'queue'">Review queue</button>
+      <div class="masthead-controls">
+        <div class="seg" role="tablist" aria-label="View">
+          <button role="tab" :aria-selected="view === 'leaderboard'"
+            :class="{ seg__opt: true, 'seg__opt--on': view === 'leaderboard' }"
+            @click="view = 'leaderboard'">Leaderboard</button>
+          <button role="tab" :aria-selected="view === 'queue'"
+            :class="{ seg__opt: true, 'seg__opt--on': view === 'queue' }"
+            @click="view = 'queue'">Review queue</button>
+        </div>
+        <div class="seg seg--sm" role="radiogroup" aria-label="Theme">
+          <button v-for="t in themes" :key="t.key" role="radio"
+            :aria-checked="theme === t.key" :title="`${t.label} theme`"
+            :class="{ seg__opt: true, 'seg__opt--on': theme === t.key }"
+            @click="setTheme(t.key)">{{ t.label }}</button>
+        </div>
       </div>
     </header>
 
@@ -174,6 +196,22 @@ h1 {
   font-weight: 600;
   background: var(--accent-bg);
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.masthead-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2xs);
+}
+
+/* Smaller segmented control for the theme picker. */
+.seg--sm {
+  padding: 2px;
+}
+.seg--sm .seg__opt {
+  padding: 3px 10px;
+  font-size: var(--step--2);
 }
 
 .leaderboard-controls {

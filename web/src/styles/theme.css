@@ -96,6 +96,86 @@
   color-scheme: dark;
 }
 
+/* ── DARK = graphite (qompass) — cool greys + blue-white accent ──
+ * Overrides the nexus defaults above. Equal specificity to :root, so it
+ * must come after it in source order to win. */
+[data-theme='dark'] {
+  --bg-page: #0b0d10;
+  --bg-panel: #101318;
+  --bg-card: #141820;
+  --bg-sub: #181d26;
+  --bg-row: #141820;
+  --bg-row-hover: #1c222c;
+
+  --border-subtle: #1e232c;
+  --border: #2a323d;
+  --border-strong: #3a4554;
+
+  --fg: #d8dde5;
+  --fg-strong: #f1f3f7;
+  --fg-muted: #8d96a3;
+  --fg-subtle: #5d6574;
+
+  --accent: #6ab8ff;
+  --accent-strong: #8ccaff;
+  --accent-bg: rgba(106, 184, 255, 0.12);
+
+  --ok: #4dc98b;
+  --ok-bg: rgba(77, 201, 139, 0.12);
+  --warn: #e8a23a;
+  --warn-bg: rgba(232, 162, 58, 0.14);
+  --err: #e66370;
+  --err-bg: rgba(230, 99, 112, 0.14);
+
+  --gold: #e8c84d;
+  --tone-comment: #b6a8f0;
+
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.18);
+
+  color-scheme: dark;
+}
+
+/* ── LIGHT = paper (qompass) — warm cream + deep ink ──
+ * Status chroma is intentionally pushed (scarlet / burnt orange / forest
+ * green); the warm cream needs more saturation to keep severity scanning
+ * tight. Gold + comment tone are darkened from the dark-theme values for
+ * AA contrast on cream. */
+[data-theme='light'] {
+  --bg-page: #f6f2ea;
+  --bg-panel: #ffffff;
+  --bg-card: #ffffff;
+  --bg-sub: #efeadf;
+  --bg-row: #ffffff;
+  --bg-row-hover: #f0ebe0;
+
+  --border-subtle: #e5ddcd;
+  --border: #cfc4ae;
+  --border-strong: #8c8370;
+
+  --fg: #1f1d17;
+  --fg-strong: #0a0906;
+  --fg-muted: #6a6354;
+  --fg-subtle: #968d7b;
+
+  --accent: #8a3a1a;
+  --accent-strong: #6b2a11;
+  --accent-bg: rgba(138, 58, 26, 0.08);
+
+  --ok: #0f7a2e;
+  --ok-bg: rgba(15, 122, 46, 0.12);
+  --warn: #a8560d;
+  --warn-bg: rgba(168, 86, 13, 0.13);
+  --err: #c41e2e;
+  --err-bg: rgba(196, 30, 46, 0.11);
+
+  --gold: #9a7a00;
+  --tone-comment: #4f43b0;
+
+  --shadow: 0 1px 3px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.04);
+
+  color-scheme: light;
+}
+
 /* ── Base reset (from qompass reset.css) ─────────────────── */
 *,
 *::before,
