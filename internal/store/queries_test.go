@@ -240,3 +240,21 @@ func TestRankQueueTiersAndOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestRankQueueUrgentBeatsNewWhenThresholdLow(t *testing.T) {
+	rows := []QueueRow{
+		{PRNumber: 1, AgeHours: 20, Awaiting: true}, // 20h: with stale=12, must be urgent (not new)
+		{PRNumber: 2, AgeHours: 5, Awaiting: true},  // 5h: still new
+	}
+	out := RankQueue(rows, 12)
+	tier := map[int]string{}
+	for _, r := range out {
+		tier[r.PRNumber] = r.Tier
+	}
+	if tier[1] != "urgent" {
+		t.Errorf("PR1 (20h, stale=12) tier = %q, want urgent", tier[1])
+	}
+	if tier[2] != "new" {
+		t.Errorf("PR2 (5h) tier = %q, want new", tier[2])
+	}
+}

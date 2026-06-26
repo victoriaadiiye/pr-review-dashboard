@@ -211,10 +211,12 @@ func RankQueue(rows []QueueRow, staleHours float64) []QueueRow {
 		switch {
 		case !out[i].Awaiting:
 			out[i].Tier = "reviewed"
+		case out[i].AgeHours > staleHours:
+			// Check urgent before new: if staleHours < newPRHours, a young-but-stale PR
+			// must be marked urgent, not new, to avoid hiding urgent PRs.
+			out[i].Tier = "urgent"
 		case out[i].AgeHours < newPRHours:
 			out[i].Tier = "new"
-		case out[i].AgeHours > staleHours:
-			out[i].Tier = "urgent"
 		default:
 			out[i].Tier = "waiting"
 		}
