@@ -279,6 +279,73 @@ func (c *Client) FetchPullRequest(ctx context.Context, owner, repo string, numbe
 	return d, nil
 }
 
+const mergedPRQuery = `
+query($owner:String!,$repo:String!,$cursor:String){
+  repository(owner:$owner,name:$repo){
+    pullRequests(states:MERGED,first:50,after:$cursor,orderBy:{field:UPDATED_AT,direction:DESC}){
+      nodes{ number mergedAt updatedAt }
+      pageInfo{ hasNextPage endCursor }
+    }
+  }
+}`
+
+type mergedPRGQL struct {
+	Data struct {
+		Repository struct {
+			PullRequests struct {
+				Nodes []struct {
+					Number    int        `json:"number"`
+					MergedAt  *time.Time `json:"mergedAt"`
+					UpdatedAt time.Time  `json:"updatedAt"`
+				} `json:"nodes"`
+				PageInfo struct {
+					HasNextPage bool    `json:"hasNextPage"`
+					EndCursor   *string `json:"endCursor"`
+				} `json:"pageInfo"`
+			} `json:"pullRequests"`
+		} `json:"repository"`
+	} `json:"data"`
+}
+
+// FetchMergedPRNumbers returns the numbers of PRs merged on/after since,
+// newest-first. It pages pullRequests(states:MERGED) ordered by UPDATED_AT desc,
+// collecting numbers whose mergedAt >= since, and stops paging once a node's
+// updatedAt < since (safe because updatedAt >= mergedAt for any PR).
+func (c *Client) FetchMergedPRNumbers(ctx context.Context, owner, repo string, since time.Time) ([]int, error) {
+	var out []int
+	var cursor *string
+	for {
+		var resp mergedPRGQL
+		vars := map[string]any{"owner": owner, "repo": repo, "cursor": cursor}
+		if err := c.do(ctx, mergedPRQuery, vars, &resp); err != nil {
+			return nil, err
+		}
+		for _, n := range resp.Data.Repository.PullRequests.Nodes {
+			if n.UpdatedAt.Before(since) {
+				return out, nil // all remaining are older; stop
+			}
+			if n.MergedAt != nil && !n.MergedAt.Before(since) {
+				out = append(out, n.Number)
+			}
+		}
+		pi := resp.Data.Repository.PullRequests.PageInfo
+		if !pi.HasNextPage || pi.EndCursor == nil {
+			break
+		}
+		cursor = pi.EndCursor
+	}
+	return out, nil
+}
+
+// SplitRepo splits "owner/name" into its parts. ok is false if malformed.
+func SplitRepo(full string) (owner, name string, ok bool) {
+	i := strings.IndexByte(full, '/')
+	if i <= 0 || i == len(full)-1 {
+		return "", "", false
+	}
+	return full[:i], full[i+1:], true
+}
+
 const teamQuery = `
 query($org:String!,$team:String!,$cursor:String){
   organization(login:$org){

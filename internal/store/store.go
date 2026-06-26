@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS comment_events (
   raw_hash TEXT UNIQUE
 );
 CREATE INDEX IF NOT EXISTS idx_comment_created ON comment_events(created_at);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 `
 
 // Open opens (or creates) the database at path and applies the schema.
@@ -152,6 +153,27 @@ VALUES (?,?,?,?,?,?,?,?,?)
 ON CONFLICT(raw_hash) DO UPDATE SET points=excluded.points, has_image=excluded.has_image`,
 		e.Repo, e.PRNumber, e.Author, e.Kind, e.BodyLen, boolToInt(e.HasImage),
 		tsOrEmpty(e.CreatedAt), e.Points, e.RawHash)
+	return err
+}
+
+// GetMeta returns the value for key. found is false if the key is absent.
+func (s *Store) GetMeta(key string) (string, bool, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM meta WHERE key = ?`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return v, true, nil
+}
+
+// SetMeta inserts or updates the value for key.
+func (s *Store) SetMeta(key, value string) error {
+	_, err := s.db.Exec(`
+INSERT INTO meta (key, value) VALUES (?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
 

@@ -59,3 +59,28 @@ func TestUpsertPersonAndPR(t *testing.T) {
 		t.Errorf("people=%d prs=%d, want 1/1", people, prs)
 	}
 }
+
+func TestMetaRoundTrip(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+
+	if _, found, err := st.GetMeta("k"); err != nil || found {
+		t.Fatalf("miss: found=%v err=%v, want found=false nil", found, err)
+	}
+	if err := st.SetMeta("k", "v1"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	v, found, err := st.GetMeta("k")
+	if err != nil || !found || v != "v1" {
+		t.Fatalf("hit: v=%q found=%v err=%v, want v1 true nil", v, found, err)
+	}
+	if err := st.SetMeta("k", "v2"); err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+	if v, _, _ := st.GetMeta("k"); v != "v2" {
+		t.Errorf("after overwrite v=%q, want v2", v)
+	}
+}

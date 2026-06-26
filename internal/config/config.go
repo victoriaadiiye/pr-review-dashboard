@@ -26,6 +26,7 @@ type Config struct {
 	DigestChannelID string
 	StalePRHours    float64
 	WebhookSecret   string
+	BackfillDays    int
 }
 
 type projectsFile struct {
@@ -48,6 +49,7 @@ func Load(projectsPath string) (Config, error) {
 		DigestChannelID: os.Getenv("DIGEST_CHANNEL_ID"),
 		StalePRHours:    floatOr("STALE_PR_HOURS", 48),
 		WebhookSecret:   os.Getenv("WEBHOOK_SECRET"),
+		BackfillDays:    intOr("BACKFILL_DAYS", 30),
 	}
 	c.Weights.ImageBonus = intOr("SCORE_IMAGE_BONUS", c.Weights.ImageBonus)
 	c.Weights.MessageBump = intOr("SCORE_MESSAGE_BUMP", c.Weights.MessageBump)

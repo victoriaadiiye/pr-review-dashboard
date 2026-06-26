@@ -7,10 +7,11 @@ your team on weekly / monthly / all-time leaderboards. A second panel shows the
 live **ready-for-review queue** — the open PRs and which requested reviewers
 still owe a review.
 
-> **Note:** since scoring happens at merge, the queue lists requested reviewers
-> who have not yet reviewed (status `pending`). It does not surface live
-> approved/changes-requested state on open PRs — that is reflected on the
-> leaderboard once the PR merges.
+> **Note:** scoring is **poll-driven** — the poll loop scans merged PRs each
+> cycle (first scan backfills `BACKFILL_DAYS` days, default 30; later scans
+> ingest new merges). The queue lists requested reviewers who have not yet
+> reviewed (status `pending`); it does not surface live approved/changes-requested
+> state on open PRs — that is reflected on the leaderboard once the PR merges.
 
 Everything ships as a single Go binary with an embedded web UI.
 
@@ -19,8 +20,11 @@ Everything ships as a single Go binary with an embedded web UI.
 ```
                          ┌─ poller (every ~15m) ─ queue snapshot + roster sync ─┐
 GitHub GraphQL ─────────┤                                                         │
-                         │                  GitHub webhook delivery               │
-                         └─ /webhook/github (on merge) ─ scorer ─ SQLite ─────────┤
+                         │            + merge scanner (poll-driven scoring)       │
+                         │                  GitHub webhook delivery (optional)    │
+                         └─ /webhook/github (on merge, if WEBHOOK_SECRET set) ────┤
+                                                                      │
+                                          scorer ─ SQLite ────────────┤
                                                                       │
                           HTTP server (:8080) ◀── reads ──────────────┘
                               /                 embedded Vue dashboard
@@ -30,9 +34,17 @@ GitHub GraphQL ─────────┤                                   
 ```
 
 - **Poller** — fetches open PRs and requested reviewers via the GitHub GraphQL
-  API; feeds the ready-for-review queue and syncs the roster. Does not score.
-- **Webhook** — triggered by GitHub when a PR is merged; verifies HMAC-SHA256
-  signature and scores the merged PR's reviews and comments.
+  API; feeds the ready-for-review queue and syncs the roster.
+- **Merge scanner** — runs inside the poll loop each cycle; scores merged PRs.
+  First scan backfills `BACKFILL_DAYS` days (default 30); subsequent scans are
+  incremental from a per-repo high-water mark. Disabled when `BACKFILL_DAYS=0`.
+  > **Large first backfills:** A large repository or `BACKFILL_DAYS` value may
+  > span several poll cycles to complete. Each cycle resumes safely — the
+  > high-water mark advances only after a scan finishes — so the board fills
+  > in incrementally.
+- **Webhook** — an **optional** alternate scoring trigger; activated only when
+  `WEBHOOK_SECRET` is set. Verifies HMAC-SHA256 on each GitHub delivery and
+  scores the merged PR immediately. Disabled (returns 503) when secret is unset.
 - **Scorer** — a pure function turning each review/comment into points (see below).
 - **Store** — event-sourced SQLite; any time window is just a `WHERE` clause.
   Leaderboard reflects merged work only (no points until merge).
@@ -76,7 +88,8 @@ Self-reviews and self-comments score 0. A thorough review with CHANGES_REQUESTED
 | `DB_PATH` | `/data/leaderboard.db` | SQLite file path. |
 | `POLL_INTERVAL` | `15m` | How often to poll GitHub. |
 | `HEALTH_PORT` | `8080` | Port for the dashboard + API + health check. |
-| `WEBHOOK_SECRET` | — | HMAC secret for GitHub webhook verification. Webhook returns 503 if unset. |
+| `WEBHOOK_SECRET` | — | HMAC secret for GitHub webhook verification. Optional alternate scoring trigger; webhook returns 503 if unset. |
+| `BACKFILL_DAYS` | `30` | How many days of merged PRs to score on first startup. `0` disables merge-scanning entirely. |
 | `SLACK_BOT_TOKEN` | — | Bot token (`xoxb-…`) for the digest. Enables the digest when set with `DIGEST_CHANNEL_ID`. |
 | `DIGEST_CHANNEL_ID` | — | Channel ID the digest posts to. The bot must be invited to it. |
 | `STALE_PR_HOURS` | `48` | A PR awaiting review longer than this is flagged in the digest. |
@@ -93,9 +106,10 @@ Repos can be supplied either via `REPOS` or a `projects.json` file:
 
 Copy `projects.example.json` → `projects.json`, or just set `REPOS`.
 
-## GitHub Webhook Setup
+## GitHub Webhook Setup (optional)
 
-To enable merge-driven scoring, configure a GitHub webhook:
+Scoring is poll-driven by default; the webhook is an optional alternate trigger
+that scores a PR immediately on merge. To enable it, configure a GitHub webhook:
 
 1. Go to your GitHub org or repo settings → Webhooks → Add webhook.
 2. Set:

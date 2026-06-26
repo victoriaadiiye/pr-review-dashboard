@@ -121,3 +121,23 @@ func TestLoadScoreWeightDefaults(t *testing.T) {
 		t.Errorf("default weights = %+v, want 5/1/1", c.Weights)
 	}
 }
+
+func TestLoadBackfillDays(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "tok")
+	t.Setenv("REPOS", "a/b")
+
+	t.Setenv("BACKFILL_DAYS", "")
+	if c, err := Load("does-not-exist.json"); err != nil || c.BackfillDays != 30 {
+		t.Fatalf("default: BackfillDays=%d err=%v, want 30 nil", c.BackfillDays, err)
+	}
+
+	t.Setenv("BACKFILL_DAYS", "7")
+	if c, _ := Load("does-not-exist.json"); c.BackfillDays != 7 {
+		t.Errorf("set: BackfillDays=%d, want 7", c.BackfillDays)
+	}
+
+	t.Setenv("BACKFILL_DAYS", "0")
+	if c, _ := Load("does-not-exist.json"); c.BackfillDays != 0 {
+		t.Errorf("zero: BackfillDays=%d, want 0 (disabled)", c.BackfillDays)
+	}
+}
