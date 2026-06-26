@@ -11,24 +11,32 @@ Everything ships as a single Go binary with an embedded web UI.
 ## How it works
 
 ```
-GitHub GraphQL ──▶ poller (every ~15m) ──▶ scorer ──▶ SQLite
-                                                         │
-                          HTTP server (:8080) ◀── reads ─┘
+                         ┌─ poller (every ~15m) ─ queue snapshot + roster sync ─┐
+GitHub GraphQL ─────────┤                                                         │
+                         │                  GitHub webhook delivery               │
+                         └─ /webhook/github (on merge) ─ scorer ─ SQLite ─────────┤
+                                                                      │
+                          HTTP server (:8080) ◀── reads ──────────────┘
                               /                 embedded Vue dashboard
                               /api/leaderboard  ranked people for a window
                               /api/queue        open PRs awaiting review
                               /health /metrics
 ```
 
-- **Poller** — fetches open PRs, their reviews, review-comment counts, and
-  requested reviewers via the GitHub GraphQL API.
-- **Scorer** — a pure function turning each review into points (see below).
+- **Poller** — fetches open PRs and requested reviewers via the GitHub GraphQL
+  API; feeds the ready-for-review queue and syncs the roster. Does not score.
+- **Webhook** — triggered by GitHub when a PR is merged; verifies HMAC-SHA256
+  signature and scores the merged PR's reviews and comments.
+- **Scorer** — a pure function turning each review/comment into points (see below).
 - **Store** — event-sourced SQLite; any time window is just a `WHERE` clause.
+  Leaderboard reflects merged work only (no points until merge).
 - **HTTP server** — JSON API + the embedded Vue single-page dashboard.
 - **Roster** — members of a configured GitHub team are the leaderboard roster
   (everyone shown, even at zero). Reviewers not on the team appear as *guests*.
 
 ## Scoring (defaults, all tunable via env)
+
+**Reviews** (scored when PR merges):
 
 | Component | Points |
 |---|---|
@@ -37,10 +45,20 @@ GitHub GraphQL ──▶ poller (every ~15m) ──▶ scorer ──▶ SQLite
 | State: COMMENTED | +2 |
 | State: APPROVED (bare LGTM) | +1 |
 | Inline comments | +1 each, capped at 10/review |
-| Substance bonus (review text > ~280 chars) | +2 |
+| Message bump (review text 1–280 chars) | +1 |
+| Substance bonus (review text > 280 chars) | +2 |
+| Image bonus (testing proof in review, gated on >280 chars) | +5 |
 
-Self-reviews score 0. A deep review with changes + 6 comments + a writeup ≈ 13;
-a bare approve = 3.
+**Issue Comments** (scored when PR merges):
+
+| Component | Points |
+|---|---|
+| Base (comment submitted) | +1 |
+| Image bonus (image in comment, gated on substantial length) | +5 |
+
+Self-reviews and self-comments score 0. A thorough review with CHANGES_REQUESTED +
+6 inline comments + a writeup (>280 chars) + testing image ≈ 15; a bare approve
+= 3. Inline-comment kinds (review vs. discussion) are not separately tracked.
 
 ## Configuration
 
@@ -52,10 +70,14 @@ a bare approve = 3.
 | `DB_PATH` | `/data/leaderboard.db` | SQLite file path. |
 | `POLL_INTERVAL` | `15m` | How often to poll GitHub. |
 | `HEALTH_PORT` | `8080` | Port for the dashboard + API + health check. |
+| `WEBHOOK_SECRET` | — | HMAC secret for GitHub webhook verification. Webhook returns 503 if unset. |
 | `SLACK_BOT_TOKEN` | — | Bot token (`xoxb-…`) for the digest. Enables the digest when set with `DIGEST_CHANNEL_ID`. |
 | `DIGEST_CHANNEL_ID` | — | Channel ID the digest posts to. The bot must be invited to it. |
 | `STALE_PR_HOURS` | `48` | A PR awaiting review longer than this is flagged in the digest. |
-| `PTS_*`, `SUBSTANCE_CHARS` | see table | Scoring overrides. |
+| `SCORE_MESSAGE_BUMP` | `1` | Points for a review with 1–280 characters. |
+| `SCORE_COMMENT_BASE` | `1` | Points for an issue comment. |
+| `SCORE_IMAGE_BONUS` | `5` | Points for a testing-proof image (gated on substantial review/comment body). |
+| `SUBSTANCE_CHARS` | `280` | Character threshold for substance bonus (+2) and message bump gates. |
 
 Repos can be supplied either via `REPOS` or a `projects.json` file:
 
@@ -64,6 +86,22 @@ Repos can be supplied either via `REPOS` or a `projects.json` file:
 ```
 
 Copy `projects.example.json` → `projects.json`, or just set `REPOS`.
+
+## GitHub Webhook Setup
+
+To enable merge-driven scoring, configure a GitHub webhook:
+
+1. Go to your GitHub org or repo settings → Webhooks → Add webhook.
+2. Set:
+   - **Payload URL**: `https://your-leaderboard-domain/webhook/github`
+   - **Content type**: `application/json`
+   - **Secret**: (copy the value of your `WEBHOOK_SECRET` env var)
+   - **Events**: Select "Pull requests" only.
+3. Leave other options at defaults.
+
+The app verifies each delivery's `X-Hub-Signature-256` header. Unsigned or invalid
+deliveries are rejected with HTTP 401. The webhook is disabled (returns 503) when
+`WEBHOOK_SECRET` is unset.
 
 ## Quick start (local)
 
