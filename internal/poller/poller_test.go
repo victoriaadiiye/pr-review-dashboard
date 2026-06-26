@@ -84,3 +84,48 @@ func TestSyncRosterMarksGuests(t *testing.T) {
 		t.Errorf("dave team = %q, want guest", teams["dave"])
 	}
 }
+
+func TestBuildReviewers(t *testing.T) {
+	base := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	fp := github.FetchedPR{
+		Author:             "alice",
+		RequestedReviewers: []string{"bob", "carol"}, // bob re-requested (has prior review), carol fresh request
+		Reviews: []github.FetchedReview{
+			{Author: "bob", State: "APPROVED", SubmittedAt: base},
+			{Author: "dave", State: "COMMENTED", SubmittedAt: base},
+			{Author: "dave", State: "CHANGES_REQUESTED", SubmittedAt: base.Add(time.Hour)}, // latest wins
+			{Author: "alice", State: "APPROVED", SubmittedAt: base},                        // self — excluded
+		},
+	}
+	got := buildReviewers(fp)
+	by := map[string]store.QueueReviewer{}
+	for _, r := range got {
+		by[r.Login] = r
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d reviewers, want 3 (bob, carol, dave): %+v", len(got), got)
+	}
+	if by["bob"].Status != "pending" || !by["bob"].ReRequested {
+		t.Errorf("bob = %+v, want pending + re_requested", by["bob"])
+	}
+	if by["carol"].Status != "pending" || by["carol"].ReRequested {
+		t.Errorf("carol = %+v, want pending, not re_requested", by["carol"])
+	}
+	if by["dave"].Status != "changes" || by["dave"].ReRequested {
+		t.Errorf("dave = %+v, want changes (latest), not re_requested", by["dave"])
+	}
+	if _, ok := by["alice"]; ok {
+		t.Errorf("PR author alice must be excluded")
+	}
+}
+
+func TestLastActivity(t *testing.T) {
+	base := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	fp := github.FetchedPR{
+		UpdatedAt: base,
+		Reviews:   []github.FetchedReview{{Author: "b", State: "COMMENTED", SubmittedAt: base.Add(3 * time.Hour)}},
+	}
+	if got := lastActivity(fp); !got.Equal(base.Add(3 * time.Hour)) {
+		t.Errorf("lastActivity = %v, want %v (latest review)", got, base.Add(3*time.Hour))
+	}
+}

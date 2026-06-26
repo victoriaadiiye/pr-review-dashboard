@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,5 +83,31 @@ func TestMetaRoundTrip(t *testing.T) {
 	}
 	if v, _, _ := st.GetMeta("k"); v != "v2" {
 		t.Errorf("after overwrite v=%q, want v2", v)
+	}
+}
+
+func TestUpsertPRWritesColumns(t *testing.T) {
+	st, _ := Open(":memory:")
+	defer st.Close()
+	now := time.Now()
+	if err := st.UpsertPR(PR{
+		Repo: "r", Number: 1, Title: "t", Author: "a", URL: "u",
+		ReadyAt: now, Additions: 5, Deletions: 2, ChangedFiles: 1, LastActivity: now,
+		Reviewers: []QueueReviewer{{Login: "b", Status: "approved"}},
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	var adds, dels, files int
+	var revJSON string
+	err := st.db.QueryRow(`SELECT additions, deletions, changed_files, reviewers_json FROM prs WHERE repo='r' AND pr_number=1`).
+		Scan(&adds, &dels, &files, &revJSON)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if adds != 5 || dels != 2 || files != 1 {
+		t.Errorf("cols = %d/%d/%d, want 5/2/1", adds, dels, files)
+	}
+	if !strings.Contains(revJSON, `"login":"b"`) {
+		t.Errorf("reviewers_json = %q", revJSON)
 	}
 }

@@ -84,7 +84,7 @@ func main() {
 		log.Print("webhook disabled: set WEBHOOK_SECRET to enable")
 	}
 
-	h := httpserver.New(st, httpserver.Assets(), runDigest, webhookHandler)
+	h := httpserver.New(st, httpserver.Assets(), runDigest, webhookHandler, cfg.StalePRHours)
 	addr := ":" + cfg.HealthPort
 	log.Printf("listening on %s", addr)
 	if err := http.ListenAndServe(addr, h); err != nil {

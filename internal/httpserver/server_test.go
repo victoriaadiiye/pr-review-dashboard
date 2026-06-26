@@ -19,7 +19,7 @@ func TestLeaderboardEndpoint(t *testing.T) {
 	st.UpsertPerson(store.Person{Login: "alice", DisplayName: "Alice", Team: "member", Active: true})
 	st.UpsertReviewEvent(store.ReviewEvent{Repo: "r", PRNumber: 1, Reviewer: "alice", State: "COMMENTED", Points: 4, RawHash: "h", SubmittedAt: time.Now()})
 
-	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil)
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil, 48)
 	req := httptest.NewRequest(http.MethodGet, "/api/leaderboard?window=all", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -39,7 +39,7 @@ func TestLeaderboardEndpoint(t *testing.T) {
 func TestHealthEndpoint(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()
-	h := New(st, fstest.MapFS{}, nil, nil)
+	h := New(st, fstest.MapFS{}, nil, nil, 48)
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -57,7 +57,7 @@ func TestDigestRunTrigger(t *testing.T) {
 		called.Add(1)
 		return nil
 	}
-	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, run, nil)
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, run, nil, 48)
 
 	req := httptest.NewRequest(http.MethodPost, "/digest/run", nil)
 	rec := httptest.NewRecorder()
@@ -74,7 +74,7 @@ func TestDigestRunTrigger(t *testing.T) {
 func TestDigestRunDisabled(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()
-	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil)
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil, 48)
 
 	req := httptest.NewRequest(http.MethodPost, "/digest/run", nil)
 	rec := httptest.NewRecorder()
@@ -87,7 +87,7 @@ func TestDigestRunDisabled(t *testing.T) {
 func TestDigestRunRejectsGET(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()
-	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, func(_ context.Context) error { return nil }, nil)
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, func(_ context.Context) error { return nil }, nil, 48)
 
 	req := httptest.NewRequest(http.MethodGet, "/digest/run", nil)
 	rec := httptest.NewRecorder()
@@ -104,7 +104,7 @@ func TestWebhookRouteMounted(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("scored"))
 	})
-	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, hook)
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, hook, 48)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhook/github", nil)
 	rec := httptest.NewRecorder()
@@ -117,12 +117,42 @@ func TestWebhookRouteMounted(t *testing.T) {
 func TestWebhookRouteDisabled(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()
-	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil)
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil, 48)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhook/github", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", rec.Code)
+	}
+}
+
+func TestQueueEndpointRanksUrgentFirst(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Now()
+	// An urgent PR (awaiting, 100h) and a new PR (awaiting, 5h).
+	st.UpsertPR(store.PR{
+		Repo: "r", Number: 1, Author: "a", URL: "u1", ReadyAt: now.Add(-100 * time.Hour),
+		Reviewers: []store.QueueReviewer{{Login: "x", Status: "pending"}},
+	})
+	st.UpsertPR(store.PR{
+		Repo: "r", Number: 2, Author: "a", URL: "u2", ReadyAt: now.Add(-5 * time.Hour),
+		Reviewers: []store.QueueReviewer{{Login: "x", Status: "pending"}},
+	})
+
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil, 48)
+	req := httptest.NewRequest(http.MethodGet, "/api/queue", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var rows []store.QueueRow
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(rows) != 2 || rows[0].PRNumber != 1 || rows[0].Tier != "urgent" || rows[1].Tier != "new" {
+		t.Errorf("rows = %+v, want #1 urgent first then #2 new", rows)
 	}
 }

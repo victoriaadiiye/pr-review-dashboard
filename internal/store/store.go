@@ -3,6 +3,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -40,6 +41,11 @@ type PR struct {
 	MergedAt           time.Time
 	UpdatedAt          time.Time
 	RequestedReviewers []string
+	Additions          int
+	Deletions          int
+	ChangedFiles       int
+	LastActivity       time.Time
+	Reviewers          []QueueReviewer
 }
 
 // Person is a roster entry (team member or guest reviewer).
@@ -62,6 +68,11 @@ CREATE TABLE IF NOT EXISTS prs (
   title TEXT, author TEXT, url TEXT,
   is_draft INTEGER, ready_at TEXT, merged_at TEXT, updated_at TEXT,
   requested_reviewers TEXT,
+  additions INTEGER NOT NULL DEFAULT 0,
+  deletions INTEGER NOT NULL DEFAULT 0,
+  changed_files INTEGER NOT NULL DEFAULT 0,
+  last_activity TEXT,
+  reviewers_json TEXT,
   last_synced TEXT,
   PRIMARY KEY (repo, pr_number)
 );
@@ -179,18 +190,26 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
 
 // UpsertPR inserts or replaces a PR snapshot.
 func (s *Store) UpsertPR(p PR) error {
-	_, err := s.db.Exec(`
+	revJSON, err := json.Marshal(p.Reviewers)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
 INSERT INTO prs
-  (repo, pr_number, title, author, url, is_draft, ready_at, merged_at, updated_at, requested_reviewers, last_synced)
-VALUES (?,?,?,?,?,?,?,?,?,?,?)
+  (repo, pr_number, title, author, url, is_draft, ready_at, merged_at, updated_at,
+   requested_reviewers, additions, deletions, changed_files, last_activity, reviewers_json, last_synced)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(repo, pr_number) DO UPDATE SET
   title=excluded.title, author=excluded.author, url=excluded.url,
   is_draft=excluded.is_draft, ready_at=excluded.ready_at, merged_at=excluded.merged_at,
   updated_at=excluded.updated_at, requested_reviewers=excluded.requested_reviewers,
+  additions=excluded.additions, deletions=excluded.deletions, changed_files=excluded.changed_files,
+  last_activity=excluded.last_activity, reviewers_json=excluded.reviewers_json,
   last_synced=excluded.last_synced`,
 		p.Repo, p.Number, p.Title, p.Author, p.URL, boolToInt(p.IsDraft),
 		tsOrEmpty(p.ReadyAt), tsOrEmpty(p.MergedAt), tsOrEmpty(p.UpdatedAt),
-		strings.Join(p.RequestedReviewers, ","), tsOrEmpty(time.Now()))
+		strings.Join(p.RequestedReviewers, ","), p.Additions, p.Deletions, p.ChangedFiles,
+		tsOrEmpty(p.LastActivity), string(revJSON), tsOrEmpty(time.Now()))
 	return err
 }
 
@@ -232,6 +251,19 @@ func migrate(db *sql.DB) error {
 	if !hasColumn(db, "review_events", "has_image") {
 		if _, err := db.Exec(`ALTER TABLE review_events ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return err
+		}
+	}
+	for _, col := range []struct{ name, ddl string }{
+		{"additions", "ALTER TABLE prs ADD COLUMN additions INTEGER NOT NULL DEFAULT 0"},
+		{"deletions", "ALTER TABLE prs ADD COLUMN deletions INTEGER NOT NULL DEFAULT 0"},
+		{"changed_files", "ALTER TABLE prs ADD COLUMN changed_files INTEGER NOT NULL DEFAULT 0"},
+		{"last_activity", "ALTER TABLE prs ADD COLUMN last_activity TEXT"},
+		{"reviewers_json", "ALTER TABLE prs ADD COLUMN reviewers_json TEXT"},
+	} {
+		if !hasColumn(db, "prs", col.name) {
+			if _, err := db.Exec(col.ddl); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

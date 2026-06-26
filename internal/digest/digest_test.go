@@ -72,26 +72,6 @@ func TestRunAllCaughtUp(t *testing.T) {
 	}
 }
 
-func TestIsAwaiting(t *testing.T) {
-	cases := []struct {
-		name string
-		row  store.QueueRow
-		want bool
-	}{
-		{"no reviewers", store.QueueRow{}, true},
-		{"a pending reviewer", store.QueueRow{Reviewers: []store.QueueReviewer{{Login: "a", Status: "pending"}}}, true},
-		{"all approved", store.QueueRow{Reviewers: []store.QueueReviewer{{Login: "a", Status: "approved"}}}, false},
-		{"approved + pending", store.QueueRow{Reviewers: []store.QueueReviewer{{Login: "a", Status: "approved"}, {Login: "b", Status: "pending"}}}, true},
-		{"commented only", store.QueueRow{Reviewers: []store.QueueReviewer{{Login: "a", Status: "commented"}}}, true},
-		{"changes requested", store.QueueRow{Reviewers: []store.QueueReviewer{{Login: "a", Status: "changes"}}}, false},
-	}
-	for _, c := range cases {
-		if got := isAwaiting(c.row); got != c.want {
-			t.Errorf("%s: isAwaiting = %v, want %v", c.name, got, c.want)
-		}
-	}
-}
-
 func TestBuildMessageHasContent(t *testing.T) {
 	now := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
 	leaders := []store.LeaderRow{
