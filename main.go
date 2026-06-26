@@ -60,7 +60,7 @@ func main() {
 		log.Print("digest disabled: set SLACK_BOT_TOKEN and DIGEST_CHANNEL_ID to enable")
 	}
 
-	h := httpserver.New(st, httpserver.Assets(), runDigest)
+	h := httpserver.New(st, httpserver.Assets(), runDigest, nil)
 	addr := ":" + cfg.HealthPort
 	log.Printf("listening on %s", addr)
 	if err := http.ListenAndServe(addr, h); err != nil {
