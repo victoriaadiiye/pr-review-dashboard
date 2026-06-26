@@ -1,8 +1,10 @@
 package store
 
 import (
+	"database/sql"
+	"encoding/json"
+	"log"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -27,13 +29,19 @@ type QueueReviewer struct {
 
 // QueueRow is one PR awaiting review.
 type QueueRow struct {
-	Repo      string          `json:"repo"`
-	PRNumber  int             `json:"pr_number"`
-	Title     string          `json:"title"`
-	Author    string          `json:"author"`
-	URL       string          `json:"url"`
-	AgeHours  float64         `json:"age_hours"`
-	Reviewers []QueueReviewer `json:"reviewers"`
+	Repo              string          `json:"repo"`
+	PRNumber          int             `json:"pr_number"`
+	Title             string          `json:"title"`
+	Author            string          `json:"author"`
+	URL               string          `json:"url"`
+	AgeHours          float64         `json:"age_hours"`
+	LastActivityHours float64         `json:"last_activity_hours"`
+	Additions         int             `json:"additions"`
+	Deletions         int             `json:"deletions"`
+	ChangedFiles      int             `json:"changed_files"`
+	Awaiting          bool            `json:"awaiting"`
+	Tier              string          `json:"tier"`
+	Reviewers         []QueueReviewer `json:"reviewers"`
 }
 
 // WindowStart returns the inclusive lower bound for a leaderboard window.
@@ -106,38 +114,39 @@ WHERE p.active = 1
 	return out, rows.Err()
 }
 
-// prSeed holds raw PR data before reviewer status is resolved.
+// prSeed holds raw PR data before enrichment.
 type prSeed struct {
-	repo      string
-	prNumber  int
-	title     string
-	author    string
-	url       string
-	readyAt   string
-	reviewers string
+	repo, title, author, url string
+	prNumber                 int
+	readyAt, lastActivity    string
+	additions, deletions     int
+	changedFiles             int
+	reviewersJSON            string
 }
 
-// Queue returns open, non-draft, unmerged PRs with per-requested-reviewer status,
-// newest-ready first.
-// Note: reviewer status queries are run after the PR cursor is closed to avoid
-// SQLite "overlapping reads on the same connection" stalls.
+// Queue returns open, non-draft, unmerged PRs enriched with size, activity, and
+// reviewer state, newest-ready first. Tier/sort is applied by RankQueue.
 func (s *Store) Queue(now time.Time) ([]QueueRow, error) {
 	rows, err := s.db.Query(`
-SELECT repo, pr_number, title, author, url, ready_at, requested_reviewers
+SELECT repo, pr_number, title, author, url, ready_at, last_activity,
+       additions, deletions, changed_files, reviewers_json
 FROM prs
 WHERE is_draft = 0 AND merged_at = ''
 ORDER BY ready_at DESC`)
 	if err != nil {
 		return nil, err
 	}
-
 	var seeds []prSeed
 	for rows.Next() {
 		var p prSeed
-		if err := rows.Scan(&p.repo, &p.prNumber, &p.title, &p.author, &p.url, &p.readyAt, &p.reviewers); err != nil {
+		var lastActivity, reviewersJSON sql.NullString
+		if err := rows.Scan(&p.repo, &p.prNumber, &p.title, &p.author, &p.url, &p.readyAt,
+			&lastActivity, &p.additions, &p.deletions, &p.changedFiles, &reviewersJSON); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		p.lastActivity = lastActivity.String
+		p.reviewersJSON = reviewersJSON.String
 		seeds = append(seeds, p)
 	}
 	if err := rows.Close(); err != nil {
@@ -147,33 +156,77 @@ ORDER BY ready_at DESC`)
 		return nil, err
 	}
 
-	var out []QueueRow
+	out := make([]QueueRow, 0, len(seeds))
 	for _, p := range seeds {
-		var q QueueRow
-		q.Repo = p.repo
-		q.PRNumber = p.prNumber
-		q.Title = p.title
-		q.Author = p.author
-		q.URL = p.url
+		q := QueueRow{
+			Repo: p.repo, PRNumber: p.prNumber, Title: p.title, Author: p.author, URL: p.url,
+			Additions: p.additions, Deletions: p.deletions, ChangedFiles: p.changedFiles,
+		}
 		if t, err := time.Parse(time.RFC3339, p.readyAt); err == nil {
 			q.AgeHours = now.Sub(t).Hours()
 		}
-		for _, login := range splitNonEmpty(p.reviewers) {
-			q.Reviewers = append(q.Reviewers, QueueReviewer{
-				Login:  login,
-				Status: s.reviewerStatus(q.Repo, q.PRNumber, login),
-			})
+		act := p.lastActivity
+		if act == "" {
+			act = p.readyAt
 		}
+		if t, err := time.Parse(time.RFC3339, act); err == nil {
+			q.LastActivityHours = now.Sub(t).Hours()
+		}
+		if p.reviewersJSON != "" {
+			if err := json.Unmarshal([]byte(p.reviewersJSON), &q.Reviewers); err != nil {
+				log.Printf("queue: bad reviewers_json for %s#%d: %v", q.Repo, q.PRNumber, err)
+				q.Reviewers = nil
+			}
+		}
+		q.Awaiting = awaiting(q.Reviewers)
 		out = append(out, q)
 	}
 	return out, nil
 }
 
-func splitNonEmpty(csv string) []string {
-	if csv == "" {
-		return nil
+// awaiting reports whether a PR still needs review: no reviewers, or any
+// reviewer is still pending or has only commented.
+func awaiting(reviewers []QueueReviewer) bool {
+	if len(reviewers) == 0 {
+		return true
 	}
-	return strings.Split(csv, ",")
+	for _, rv := range reviewers {
+		if rv.Status == "pending" || rv.Status == "commented" {
+			return true
+		}
+	}
+	return false
+}
+
+// newPRHours is the age below which a PR is treated as "new".
+const newPRHours = 24
+
+// RankQueue assigns each row's Tier and returns the rows sorted urgent-first
+// (urgent < waiting < new < reviewed), then by AgeHours descending within a tier.
+func RankQueue(rows []QueueRow, staleHours float64) []QueueRow {
+	rank := map[string]int{"urgent": 0, "waiting": 1, "new": 2, "reviewed": 3}
+	out := make([]QueueRow, len(rows))
+	copy(out, rows)
+	for i := range out {
+		switch {
+		case !out[i].Awaiting:
+			out[i].Tier = "reviewed"
+		case out[i].AgeHours < newPRHours:
+			out[i].Tier = "new"
+		case out[i].AgeHours > staleHours:
+			out[i].Tier = "urgent"
+		default:
+			out[i].Tier = "waiting"
+		}
+	}
+	sort.SliceStable(out, func(a, b int) bool {
+		ra, rb := rank[out[a].Tier], rank[out[b].Tier]
+		if ra != rb {
+			return ra < rb
+		}
+		return out[a].AgeHours > out[b].AgeHours
+	})
+	return out
 }
 
 // DistinctReviewers returns every login that has submitted a review event.
@@ -192,27 +245,4 @@ func (s *Store) DistinctReviewers() ([]string, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-// reviewerStatus returns the latest review state for a reviewer on a PR, mapped
-// to a display status. "pending" if they have not reviewed.
-func (s *Store) reviewerStatus(repo string, pr int, login string) string {
-	var state string
-	err := s.db.QueryRow(`
-SELECT state FROM review_events
-WHERE repo = ? AND pr_number = ? AND reviewer = ?
-ORDER BY submitted_at DESC LIMIT 1`, repo, pr, login).Scan(&state)
-	if err != nil {
-		return "pending"
-	}
-	switch state {
-	case "APPROVED":
-		return "approved"
-	case "CHANGES_REQUESTED":
-		return "changes"
-	case "COMMENTED":
-		return "commented"
-	default:
-		return "pending"
-	}
 }

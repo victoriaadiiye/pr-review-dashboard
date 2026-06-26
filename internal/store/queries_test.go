@@ -120,7 +120,10 @@ func TestQueueDerivesReviewerStatus(t *testing.T) {
 	s.UpsertPR(PR{
 		Repo: "acme/widgets", Number: 1, Title: "feat", Author: "bob", URL: "u",
 		IsDraft: false, ReadyAt: now.Add(-5 * time.Hour),
-		RequestedReviewers: []string{"alice", "carol"},
+		Reviewers: []QueueReviewer{
+			{Login: "alice", Status: "commented"},
+			{Login: "carol", Status: "pending"},
+		},
 	})
 	rows, err := s.Queue(now)
 	if err != nil {
@@ -142,5 +145,98 @@ func TestQueueDerivesReviewerStatus(t *testing.T) {
 	}
 	if got["carol"] != "pending" {
 		t.Errorf("carol status = %q, want pending", got["carol"])
+	}
+}
+
+func TestQueueComputesAwaitingAndSize(t *testing.T) {
+	st, _ := Open(":memory:")
+	defer st.Close()
+	now := time.Now()
+	if err := st.UpsertPR(PR{
+		Repo: "acme/widgets", Number: 7, Title: "t", Author: "alice", URL: "u",
+		ReadyAt: now.Add(-72 * time.Hour), LastActivity: now.Add(-2 * time.Hour),
+		Additions: 210, Deletions: 18, ChangedFiles: 4,
+		Reviewers: []QueueReviewer{
+			{Login: "bob", Status: "pending", ReRequested: true},
+			{Login: "carol", Status: "approved"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	rows, err := st.Queue(now)
+	if err != nil {
+		t.Fatalf("Queue: %v", err)
+	}
+	r := rows[0]
+	if r.Additions != 210 || r.Deletions != 18 || r.ChangedFiles != 4 {
+		t.Errorf("size = +%d -%d /%d", r.Additions, r.Deletions, r.ChangedFiles)
+	}
+	if len(r.Reviewers) != 2 || !r.Reviewers[0].ReRequested {
+		t.Errorf("reviewers = %+v", r.Reviewers)
+	}
+	if !r.Awaiting {
+		t.Errorf("Awaiting = false, want true (bob pending)")
+	}
+	if r.LastActivityHours < 1.5 || r.LastActivityHours > 2.5 {
+		t.Errorf("LastActivityHours = %v, want ~2", r.LastActivityHours)
+	}
+}
+
+func TestQueueAwaitingRule(t *testing.T) {
+	cases := []struct {
+		name      string
+		reviewers []QueueReviewer
+		want      bool
+	}{
+		{"none", nil, true},
+		{"a pending", []QueueReviewer{{Login: "a", Status: "pending"}}, true},
+		{"commented only", []QueueReviewer{{Login: "a", Status: "commented"}}, true},
+		{"all approved", []QueueReviewer{{Login: "a", Status: "approved"}}, false},
+		{"changes", []QueueReviewer{{Login: "a", Status: "changes"}}, false},
+		{"approved+pending", []QueueReviewer{{Login: "a", Status: "approved"}, {Login: "b", Status: "pending"}}, true},
+	}
+	st, _ := Open(":memory:")
+	defer st.Close()
+	now := time.Now()
+	for i, c := range cases {
+		st.UpsertPR(PR{Repo: "r", Number: i + 1, Author: "x", ReadyAt: now, Reviewers: c.reviewers})
+	}
+	rows, _ := st.Queue(now)
+	got := map[int]bool{}
+	for _, r := range rows {
+		got[r.PRNumber] = r.Awaiting
+	}
+	for i, c := range cases {
+		if got[i+1] != c.want {
+			t.Errorf("%s: Awaiting = %v, want %v", c.name, got[i+1], c.want)
+		}
+	}
+}
+
+func TestRankQueueTiersAndOrder(t *testing.T) {
+	rows := []QueueRow{
+		{PRNumber: 1, AgeHours: 100, Awaiting: true},  // urgent (>48)
+		{PRNumber: 2, AgeHours: 30, Awaiting: true},   // waiting (24..48)
+		{PRNumber: 3, AgeHours: 5, Awaiting: true},    // new (<24)
+		{PRNumber: 4, AgeHours: 200, Awaiting: false}, // reviewed (not awaiting)
+		{PRNumber: 5, AgeHours: 80, Awaiting: true},   // urgent, older than #1? no — younger
+	}
+	out := RankQueue(rows, 48)
+	tier := map[int]string{}
+	var order []int
+	for _, r := range out {
+		tier[r.PRNumber] = r.Tier
+		order = append(order, r.PRNumber)
+	}
+	if tier[1] != "urgent" || tier[2] != "waiting" || tier[3] != "new" || tier[4] != "reviewed" || tier[5] != "urgent" {
+		t.Fatalf("tiers = %v", tier)
+	}
+	// urgent first, oldest-first within tier: 1(100),5(80), then 2, then 3, then 4
+	want := []int{1, 5, 2, 3, 4}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Errorf("order = %v, want %v", order, want)
+			break
+		}
 	}
 }
