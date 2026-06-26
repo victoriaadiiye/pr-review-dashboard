@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"sort"
 	"time"
 
 	"pr-review-dashboard/internal/store"
@@ -57,6 +58,24 @@ func New(st *store.Store, assets fs.FS, runDigest func(context.Context) error, w
 			rows = store.RankQueue(rows, staleHours)
 		}
 		writeJSON(w, rows, err)
+	})
+
+	mux.HandleFunc("/api/history", func(w http.ResponseWriter, r *http.Request) {
+		window := r.URL.Query().Get("window")
+		if window == "" {
+			window = "all"
+		}
+		reviewer := r.URL.Query().Get("reviewer")
+		rows, err := st.ReviewHistory(window, reviewer, time.Now())
+		writeJSON(w, rows, err)
+	})
+
+	mux.HandleFunc("/api/reviewers", func(w http.ResponseWriter, r *http.Request) {
+		who, err := st.DistinctReviewers()
+		if err == nil {
+			sort.Strings(who)
+		}
+		writeJSON(w, who, err)
 	})
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {

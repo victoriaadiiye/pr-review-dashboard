@@ -36,6 +36,71 @@ func TestLeaderboardEndpoint(t *testing.T) {
 	}
 }
 
+func TestHistoryEndpoint(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Now()
+	st.UpsertPerson(store.Person{Login: "alice", DisplayName: "Alice", Team: "member", Active: true})
+	st.UpsertPR(store.PR{Repo: "r", Number: 1, Title: "Feat", Author: "bob", URL: "u"})
+	st.UpsertReviewEvent(store.ReviewEvent{Repo: "r", PRNumber: 1, Reviewer: "alice", State: "APPROVED", Points: 6, RawHash: "h", SubmittedAt: now})
+
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil, 48)
+	req := httptest.NewRequest(http.MethodGet, "/api/history?window=all", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var rows []store.HistoryRow
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Reviewer != "alice" || rows[0].Points != 6 || rows[0].Title != "Feat" {
+		t.Errorf("rows = %+v", rows)
+	}
+}
+
+func TestHistoryEndpointReviewerFilter(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Now()
+	st.UpsertReviewEvent(store.ReviewEvent{Repo: "r", PRNumber: 1, Reviewer: "alice", State: "APPROVED", Points: 1, RawHash: "a", SubmittedAt: now})
+	st.UpsertReviewEvent(store.ReviewEvent{Repo: "r", PRNumber: 2, Reviewer: "dave", State: "APPROVED", Points: 1, RawHash: "d", SubmittedAt: now})
+
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil, 48)
+	req := httptest.NewRequest(http.MethodGet, "/api/history?reviewer=dave", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var rows []store.HistoryRow
+	json.Unmarshal(rec.Body.Bytes(), &rows)
+	if len(rows) != 1 || rows[0].Reviewer != "dave" {
+		t.Errorf("rows = %+v, want only dave", rows)
+	}
+}
+
+func TestReviewersEndpoint(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Now()
+	st.UpsertReviewEvent(store.ReviewEvent{Repo: "r", PRNumber: 1, Reviewer: "bob", State: "APPROVED", Points: 1, RawHash: "b", SubmittedAt: now})
+	st.UpsertReviewEvent(store.ReviewEvent{Repo: "r", PRNumber: 2, Reviewer: "alice", State: "APPROVED", Points: 1, RawHash: "a", SubmittedAt: now})
+
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil, 48)
+	req := httptest.NewRequest(http.MethodGet, "/api/reviewers", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var who []string
+	if err := json.Unmarshal(rec.Body.Bytes(), &who); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(who) != 2 || who[0] != "alice" || who[1] != "bob" {
+		t.Errorf("reviewers = %v, want sorted [alice bob]", who)
+	}
+}
+
 func TestHealthEndpoint(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()
