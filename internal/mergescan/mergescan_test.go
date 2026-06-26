@@ -122,3 +122,19 @@ func TestScanRepoBadRepo(t *testing.T) {
 		t.Error("want error for malformed repo, got nil")
 	}
 }
+
+func TestScanRepoCorruptMarkFallsBackToFullWindow(t *testing.T) {
+	st := newStore(t)
+	st.SetMeta("last_merge_scan:acme/widgets", "not-a-date")
+	l := &fakeLister{}
+	s := New(l, &fakeIngester{}, st, 30)
+	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+
+	if err := s.ScanRepo(context.Background(), "acme/widgets", now); err != nil {
+		t.Fatalf("corrupt mark must not error: %v", err)
+	}
+	want := now.AddDate(0, 0, -30)
+	if !l.since.Equal(want) {
+		t.Errorf("corrupt-mark since = %v, want %v", l.since, want)
+	}
+}
