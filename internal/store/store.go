@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS review_events (
   reviewer TEXT, state TEXT,
   inline_comment_count INTEGER, body_len INTEGER,
   submitted_at TEXT, points INTEGER,
+  has_image INTEGER NOT NULL DEFAULT 0,
   raw_hash TEXT UNIQUE
 );
 CREATE INDEX IF NOT EXISTS idx_events_submitted ON review_events(submitted_at);
