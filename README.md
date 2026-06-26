@@ -4,7 +4,13 @@ A small, self-hosted dashboard that makes code review visible and a little
 competitive. It polls GitHub for pull requests and reviews across the repos you
 configure, scores each review by **thoroughness** (not just count), and ranks
 your team on weekly / monthly / all-time leaderboards. A second panel shows the
-live **ready-for-review queue** with per-reviewer status.
+live **ready-for-review queue** — the open PRs and which requested reviewers
+still owe a review.
+
+> **Note:** since scoring happens at merge, the queue lists requested reviewers
+> who have not yet reviewed (status `pending`). It does not surface live
+> approved/changes-requested state on open PRs — that is reflected on the
+> leaderboard once the PR merges.
 
 Everything ships as a single Go binary with an embedded web UI.
 
