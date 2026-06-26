@@ -88,3 +88,36 @@ func TestLoadStalePRHoursDefault(t *testing.T) {
 		t.Errorf("StalePRHours default = %v, want 48", c.StalePRHours)
 	}
 }
+
+func TestLoadWebhookAndScoreConfig(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "tok")
+	t.Setenv("REPOS", "a/b")
+	t.Setenv("WEBHOOK_SECRET", "sekret")
+	t.Setenv("SCORE_IMAGE_BONUS", "9")
+	t.Setenv("SCORE_MESSAGE_BUMP", "2")
+	t.Setenv("SCORE_COMMENT_BASE", "3")
+
+	c, err := Load("does-not-exist.json")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.WebhookSecret != "sekret" {
+		t.Errorf("WebhookSecret = %q", c.WebhookSecret)
+	}
+	if c.Weights.ImageBonus != 9 || c.Weights.MessageBump != 2 || c.Weights.CommentBase != 3 {
+		t.Errorf("weights = %+v", c.Weights)
+	}
+}
+
+func TestLoadScoreWeightDefaults(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "tok")
+	t.Setenv("REPOS", "a/b")
+	t.Setenv("SCORE_IMAGE_BONUS", "")
+	c, err := Load("does-not-exist.json")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Weights.ImageBonus != 5 || c.Weights.MessageBump != 1 || c.Weights.CommentBase != 1 {
+		t.Errorf("default weights = %+v, want 5/1/1", c.Weights)
+	}
+}

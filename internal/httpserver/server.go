@@ -13,8 +13,17 @@ import (
 
 // New returns the HTTP handler. assets is the built Vue dashboard filesystem.
 // runDigest triggers an on-demand Slack digest; pass nil to disable the route.
-func New(st *store.Store, assets fs.FS, runDigest func(context.Context) error) http.Handler {
+// webhook handles POST /webhook/github; pass nil to disable the route.
+func New(st *store.Store, assets fs.FS, runDigest func(context.Context) error, webhook http.Handler) http.Handler {
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("/webhook/github", func(w http.ResponseWriter, r *http.Request) {
+		if webhook == nil {
+			http.Error(w, "webhook not configured", http.StatusServiceUnavailable)
+			return
+		}
+		webhook.ServeHTTP(w, r)
+	})
 
 	mux.HandleFunc("/digest/run", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

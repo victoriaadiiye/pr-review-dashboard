@@ -62,13 +62,19 @@ func (s *Store) Leaderboard(window string, now time.Time) ([]LeaderRow, error) {
 	start := WindowStart(window, now)
 	rows, err := s.db.Query(`
 SELECT p.login, p.display_name, p.team,
-       COALESCE(SUM(CASE WHEN e.submitted_at >= ? OR ? = '' THEN e.points ELSE 0 END), 0) AS pts,
-       COALESCE(SUM(CASE WHEN e.submitted_at >= ? OR ? = '' THEN 1 ELSE 0 END), 0) AS revs
+       COALESCE(rv.pts, 0) + COALESCE(cm.pts, 0) AS pts,
+       COALESCE(rv.revs, 0) AS revs
 FROM people p
-LEFT JOIN review_events e ON e.reviewer = p.login
+LEFT JOIN (
+  SELECT reviewer, SUM(points) AS pts, COUNT(*) AS revs
+  FROM review_events WHERE submitted_at >= ? OR ? = '' GROUP BY reviewer
+) rv ON rv.reviewer = p.login
+LEFT JOIN (
+  SELECT author, SUM(points) AS pts
+  FROM comment_events WHERE created_at >= ? OR ? = '' GROUP BY author
+) cm ON cm.author = p.login
 WHERE p.active = 1
-GROUP BY p.login, p.display_name, p.team
-HAVING p.team = 'member' OR pts > 0`,
+  AND (p.team = 'member' OR (COALESCE(rv.pts, 0) + COALESCE(cm.pts, 0)) > 0)`,
 		tsOrEmpty(start), tsOrEmpty(start), tsOrEmpty(start), tsOrEmpty(start))
 	if err != nil {
 		return nil, err

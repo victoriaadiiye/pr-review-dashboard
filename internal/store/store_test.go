@@ -16,7 +16,7 @@ func TestUpsertReviewEventDedupesByRawHash(t *testing.T) {
 		Repo: "acme/widgets", PRNumber: 1, Reviewer: "alice",
 		State: "APPROVED", InlineComments: 0, BodyLen: 5,
 		SubmittedAt: time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
-		Points: 3, RawHash: "h1",
+		Points:      3, RawHash: "h1",
 	}
 	if err := s.UpsertReviewEvent(e); err != nil {
 		t.Fatalf("first upsert: %v", err)

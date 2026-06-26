@@ -19,7 +19,7 @@ func TestLeaderboardEndpoint(t *testing.T) {
 	st.UpsertPerson(store.Person{Login: "alice", DisplayName: "Alice", Team: "member", Active: true})
 	st.UpsertReviewEvent(store.ReviewEvent{Repo: "r", PRNumber: 1, Reviewer: "alice", State: "COMMENTED", Points: 4, RawHash: "h", SubmittedAt: time.Now()})
 
-	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil)
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/leaderboard?window=all", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -39,7 +39,7 @@ func TestLeaderboardEndpoint(t *testing.T) {
 func TestHealthEndpoint(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()
-	h := New(st, fstest.MapFS{}, nil)
+	h := New(st, fstest.MapFS{}, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -57,7 +57,7 @@ func TestDigestRunTrigger(t *testing.T) {
 		called.Add(1)
 		return nil
 	}
-	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, run)
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, run, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/digest/run", nil)
 	rec := httptest.NewRecorder()
@@ -74,7 +74,7 @@ func TestDigestRunTrigger(t *testing.T) {
 func TestDigestRunDisabled(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()
-	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil)
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/digest/run", nil)
 	rec := httptest.NewRecorder()
@@ -87,12 +87,42 @@ func TestDigestRunDisabled(t *testing.T) {
 func TestDigestRunRejectsGET(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()
-	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, func(_ context.Context) error { return nil })
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, func(_ context.Context) error { return nil }, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/digest/run", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", rec.Code)
+	}
+}
+
+func TestWebhookRouteMounted(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	hook := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("scored"))
+	})
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, hook)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook/github", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "scored" {
+		t.Errorf("status = %d body = %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWebhookRouteDisabled(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	h := New(st, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook/github", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rec.Code)
 	}
 }

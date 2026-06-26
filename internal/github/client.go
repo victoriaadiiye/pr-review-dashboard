@@ -31,8 +31,10 @@ func (c *Client) WithEndpoint(url string) *Client { c.endpoint = url; return c }
 
 // FetchedReview is a parsed review.
 type FetchedReview struct {
+	ID             string
 	Author         string
 	State          string
+	Body           string
 	InlineComments int
 	BodyLen        int
 	SubmittedAt    time.Time
@@ -97,7 +99,7 @@ query($owner:String!,$repo:String!,$cursor:String){
         author{login}
         createdAt updatedAt mergedAt
         reviewRequests(first:20){nodes{requestedReviewer{... on User{login}}}}
-        reviews(first:50){nodes{author{login} state submittedAt body comments{totalCount}}}
+        reviews(first:50){nodes{id author{login} state submittedAt body comments{totalCount}}}
       }
       pageInfo{hasNextPage endCursor}
     }
@@ -109,14 +111,14 @@ type prGQL struct {
 		Repository struct {
 			PullRequests struct {
 				Nodes []struct {
-					Number    int    `json:"number"`
-					Title     string `json:"title"`
-					URL       string `json:"url"`
-					IsDraft   bool   `json:"isDraft"`
-					Author    *struct{ Login string } `json:"author"`
-					CreatedAt time.Time  `json:"createdAt"`
-					UpdatedAt time.Time  `json:"updatedAt"`
-					MergedAt  *time.Time `json:"mergedAt"`
+					Number         int                     `json:"number"`
+					Title          string                  `json:"title"`
+					URL            string                  `json:"url"`
+					IsDraft        bool                    `json:"isDraft"`
+					Author         *struct{ Login string } `json:"author"`
+					CreatedAt      time.Time               `json:"createdAt"`
+					UpdatedAt      time.Time               `json:"updatedAt"`
+					MergedAt       *time.Time              `json:"mergedAt"`
 					ReviewRequests struct {
 						Nodes []struct {
 							RequestedReviewer *struct{ Login string } `json:"requestedReviewer"`
@@ -124,10 +126,11 @@ type prGQL struct {
 					} `json:"reviewRequests"`
 					Reviews struct {
 						Nodes []struct {
-							Author      *struct{ Login string } `json:"author"`
-							State       string     `json:"state"`
-							SubmittedAt *time.Time `json:"submittedAt"`
-							Body        string     `json:"body"`
+							ID          string                   `json:"id"`
+							Author      *struct{ Login string }  `json:"author"`
+							State       string                   `json:"state"`
+							SubmittedAt *time.Time               `json:"submittedAt"`
+							Body        string                   `json:"body"`
 							Comments    struct{ TotalCount int } `json:"comments"`
 						} `json:"nodes"`
 					} `json:"reviews"`
@@ -166,7 +169,7 @@ func (c *Client) FetchPullRequests(ctx context.Context, owner, repo string) ([]F
 				}
 			}
 			for _, rv := range n.Reviews.Nodes {
-				fr := FetchedReview{Author: login(rv.Author), State: rv.State, InlineComments: rv.Comments.TotalCount, BodyLen: len(rv.Body)}
+				fr := FetchedReview{ID: rv.ID, Author: login(rv.Author), State: rv.State, Body: rv.Body, InlineComments: rv.Comments.TotalCount, BodyLen: len(rv.Body)}
 				if rv.SubmittedAt != nil {
 					fr.SubmittedAt = *rv.SubmittedAt
 				}
@@ -188,6 +191,92 @@ func login(a *struct{ Login string }) string {
 		return ""
 	}
 	return a.Login
+}
+
+// FetchedComment is a parsed standalone PR issue comment.
+type FetchedComment struct {
+	ID        string
+	Author    string
+	Body      string
+	CreatedAt time.Time
+}
+
+// FetchedPRDetail is one PR's full review + issue-comment history, for scoring
+// at merge time.
+type FetchedPRDetail struct {
+	Number   int
+	Author   string
+	Reviews  []FetchedReview
+	Comments []FetchedComment
+}
+
+const prDetailQuery = `
+query($owner:String!,$repo:String!,$number:Int!){
+  repository(owner:$owner,name:$repo){
+    pullRequest(number:$number){
+      number
+      author{login}
+      reviews(first:100){nodes{id author{login} state submittedAt body comments{totalCount}}}
+      comments(first:100){nodes{id author{login} body createdAt}}
+    }
+  }
+}`
+
+type prDetailGQL struct {
+	Data struct {
+		Repository struct {
+			PullRequest struct {
+				Number  int                     `json:"number"`
+				Author  *struct{ Login string } `json:"author"`
+				Reviews struct {
+					Nodes []struct {
+						ID          string                   `json:"id"`
+						Author      *struct{ Login string }  `json:"author"`
+						State       string                   `json:"state"`
+						SubmittedAt *time.Time               `json:"submittedAt"`
+						Body        string                   `json:"body"`
+						Comments    struct{ TotalCount int } `json:"comments"`
+					} `json:"nodes"`
+				} `json:"reviews"`
+				Comments struct {
+					Nodes []struct {
+						ID        string                  `json:"id"`
+						Author    *struct{ Login string } `json:"author"`
+						Body      string                  `json:"body"`
+						CreatedAt time.Time               `json:"createdAt"`
+					} `json:"nodes"`
+				} `json:"comments"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	} `json:"data"`
+}
+
+// FetchPullRequest returns one PR's full review + issue-comment history. Used by
+// the merge webhook to score a single known PR rather than scanning open PRs.
+func (c *Client) FetchPullRequest(ctx context.Context, owner, repo string, number int) (FetchedPRDetail, error) {
+	var resp prDetailGQL
+	vars := map[string]any{"owner": owner, "repo": repo, "number": number}
+	if err := c.do(ctx, prDetailQuery, vars, &resp); err != nil {
+		return FetchedPRDetail{}, err
+	}
+	pr := resp.Data.Repository.PullRequest
+	d := FetchedPRDetail{Number: pr.Number, Author: login(pr.Author)}
+	for _, rv := range pr.Reviews.Nodes {
+		fr := FetchedReview{
+			ID: rv.ID, Author: login(rv.Author), State: rv.State, Body: rv.Body,
+			InlineComments: rv.Comments.TotalCount, BodyLen: len(rv.Body),
+		}
+		if rv.SubmittedAt != nil {
+			fr.SubmittedAt = *rv.SubmittedAt
+		}
+		d.Reviews = append(d.Reviews, fr)
+	}
+	for _, cm := range pr.Comments.Nodes {
+		d.Comments = append(d.Comments, FetchedComment{
+			ID: cm.ID, Author: login(cm.Author), Body: cm.Body, CreatedAt: cm.CreatedAt,
+		})
+	}
+	return d, nil
 }
 
 const teamQuery = `

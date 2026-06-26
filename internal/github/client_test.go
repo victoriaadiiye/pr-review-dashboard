@@ -60,3 +60,37 @@ func TestFetchPullRequestsParses(t *testing.T) {
 		t.Errorf("review = %+v", p.Reviews)
 	}
 }
+
+func TestFetchPullRequest(t *testing.T) {
+	const body = `{"data":{"repository":{"pullRequest":{
+		"number":42,
+		"author":{"login":"carol"},
+		"reviews":{"nodes":[
+			{"id":"R1","author":{"login":"alice"},"state":"CHANGES_REQUESTED","submittedAt":"2026-06-20T10:00:00Z","body":"please fix","comments":{"totalCount":3}}
+		]},
+		"comments":{"nodes":[
+			{"id":"C1","author":{"login":"bob"},"body":"nice work","createdAt":"2026-06-20T11:00:00Z"}
+		]}
+	}}}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok").WithEndpoint(srv.URL)
+	d, err := c.FetchPullRequest(context.Background(), "acme", "widgets", 42)
+	if err != nil {
+		t.Fatalf("FetchPullRequest: %v", err)
+	}
+	if d.Number != 42 || d.Author != "carol" {
+		t.Fatalf("detail = %+v", d)
+	}
+	if len(d.Reviews) != 1 || d.Reviews[0].Author != "alice" || d.Reviews[0].ID != "R1" ||
+		d.Reviews[0].Body != "please fix" || d.Reviews[0].InlineComments != 3 {
+		t.Errorf("reviews = %+v", d.Reviews)
+	}
+	if len(d.Comments) != 1 || d.Comments[0].Author != "bob" || d.Comments[0].ID != "C1" || d.Comments[0].Body != "nice work" {
+		t.Errorf("comments = %+v", d.Comments)
+	}
+}
