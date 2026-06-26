@@ -125,6 +125,37 @@ func TestFetchMergedPRNumbers(t *testing.T) {
 	}
 }
 
+func TestFetchPullRequestsParsesSize(t *testing.T) {
+	const body = `{"data":{"repository":{"pullRequests":{
+		"nodes":[{
+			"number":7,"title":"t","url":"u","isDraft":false,
+			"author":{"login":"alice"},
+			"createdAt":"2026-06-20T10:00:00Z","updatedAt":"2026-06-21T10:00:00Z","mergedAt":null,
+			"additions":210,"deletions":18,"changedFiles":4,
+			"reviewRequests":{"nodes":[]},
+			"reviews":{"nodes":[]}
+		}],
+		"pageInfo":{"hasNextPage":false,"endCursor":null}
+	}}}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok").WithEndpoint(srv.URL)
+	prs, err := c.FetchPullRequests(context.Background(), "acme", "widgets")
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if len(prs) != 1 {
+		t.Fatalf("got %d PRs, want 1", len(prs))
+	}
+	if prs[0].Additions != 210 || prs[0].Deletions != 18 || prs[0].ChangedFiles != 4 {
+		t.Errorf("size = +%d -%d / %d files, want +210 -18 / 4", prs[0].Additions, prs[0].Deletions, prs[0].ChangedFiles)
+	}
+}
+
 func TestSplitRepo(t *testing.T) {
 	cases := []struct {
 		in          string

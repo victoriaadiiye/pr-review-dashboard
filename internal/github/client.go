@@ -52,6 +52,9 @@ type FetchedPR struct {
 	UpdatedAt          time.Time
 	RequestedReviewers []string
 	Reviews            []FetchedReview
+	Additions          int
+	Deletions          int
+	ChangedFiles       int
 }
 
 func (c *Client) do(ctx context.Context, query string, vars map[string]any, out any) error {
@@ -95,7 +98,7 @@ query($owner:String!,$repo:String!,$cursor:String){
   repository(owner:$owner,name:$repo){
     pullRequests(states:OPEN,first:50,after:$cursor,orderBy:{field:UPDATED_AT,direction:DESC}){
       nodes{
-        number title url isDraft
+        number title url isDraft additions deletions changedFiles
         author{login}
         createdAt updatedAt mergedAt
         reviewRequests(first:20){nodes{requestedReviewer{... on User{login}}}}
@@ -115,6 +118,9 @@ type prGQL struct {
 					Title          string                  `json:"title"`
 					URL            string                  `json:"url"`
 					IsDraft        bool                    `json:"isDraft"`
+					Additions      int                     `json:"additions"`
+					Deletions      int                     `json:"deletions"`
+					ChangedFiles   int                     `json:"changedFiles"`
 					Author         *struct{ Login string } `json:"author"`
 					CreatedAt      time.Time               `json:"createdAt"`
 					UpdatedAt      time.Time               `json:"updatedAt"`
@@ -160,6 +166,9 @@ func (c *Client) FetchPullRequests(ctx context.Context, owner, repo string) ([]F
 				ReadyAt: n.CreatedAt, UpdatedAt: n.UpdatedAt,
 			}
 			p.Author = login(n.Author)
+			p.Additions = n.Additions
+			p.Deletions = n.Deletions
+			p.ChangedFiles = n.ChangedFiles
 			if n.MergedAt != nil {
 				p.MergedAt = *n.MergedAt
 			}
