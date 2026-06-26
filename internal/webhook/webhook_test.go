@@ -149,4 +149,45 @@ func TestNonPREventIgnored(t *testing.T) {
 	}
 }
 
+func TestEmptyAuthorEventsNotPersisted(t *testing.T) {
+	st := newStore(t)
+	f := &fakeFetcher{detail: github.FetchedPRDetail{
+		Number: 42, Author: "carol",
+		Reviews: []github.FetchedReview{
+			{ID: "R1", Author: "", State: "APPROVED", Body: "empty author review"},
+			{ID: "R2", Author: "alice", State: "APPROVED", Body: "real author review"},
+		},
+		Comments: []github.FetchedComment{
+			{ID: "C1", Author: "", Body: "empty author comment"},
+			{ID: "C2", Author: "bob", Body: "real author comment"},
+		},
+	}}
+	h := New("sekret", f, st, scorer.Default())
+
+	body := []byte(mergedBody)
+	rec := post(t, h, "pull_request", sign("sekret", body), body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	st.UpsertPerson(store.Person{Login: "alice", Team: "member", Active: true})
+	st.UpsertPerson(store.Person{Login: "bob", Team: "member", Active: true})
+	board, _ := st.Leaderboard("all", timeNowUTC())
+	pts := map[string]int{}
+	for _, r := range board {
+		pts[r.Login] = r.Points
+	}
+
+	if pts["alice"] != 4 { // APPROVED (2+1) + message-bump (1)
+		t.Errorf("alice points = %d, want 4", pts["alice"])
+	}
+	if pts["bob"] != 1 { // comment base = 1
+		t.Errorf("bob points = %d, want 1", pts["bob"])
+	}
+	// Verify no empty-author rows exist; if they did, there would be a row with 0 points
+	if len(board) != 2 {
+		t.Errorf("leaderboard size = %d, want 2 (alice + bob, no empty-author rows)", len(board))
+	}
+}
+
 func timeNowUTC() time.Time { return time.Now().UTC() }

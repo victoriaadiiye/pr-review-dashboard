@@ -57,7 +57,7 @@ GitHub GraphQL ─────────┤                                   
 | Image bonus (image in comment, gated on substantial length) | +5 |
 
 Self-reviews and self-comments score 0. A thorough review with CHANGES_REQUESTED +
-6 inline comments + a writeup (>280 chars) + testing image ≈ 15; a bare approve
+6 inline comments + a writeup (>280 chars) + testing image ≈ 18; a bare approve
 = 3. Inline-comment kinds (review vs. discussion) are not separately tracked.
 
 ## Configuration

@@ -97,6 +97,9 @@ func (h *handler) score(ctx context.Context, fullName, owner, repo string, numbe
 		return fmt.Errorf("fetch: %w", err)
 	}
 	for _, rv := range d.Reviews {
+		if rv.Author == "" {
+			continue
+		}
 		hasImg := scorer.HasImage(rv.Body)
 		pts := scorer.Score(scorer.Review{
 			State: rv.State, InlineComments: rv.InlineComments, BodyLen: len(rv.Body),
@@ -115,6 +118,9 @@ func (h *handler) score(ctx context.Context, fullName, owner, repo string, numbe
 		}
 	}
 	for _, cm := range d.Comments {
+		if cm.Author == "" {
+			continue
+		}
 		hasImg := scorer.HasImage(cm.Body)
 		pts := scorer.ScoreComment(scorer.Comment{
 			BodyLen: len(cm.Body), HasImage: hasImg, SelfComment: cm.Author == d.Author,
