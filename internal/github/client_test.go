@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 const prResponse = `{"data":{"repository":{"pullRequests":{"nodes":[
@@ -92,5 +93,53 @@ func TestFetchPullRequest(t *testing.T) {
 	}
 	if len(d.Comments) != 1 || d.Comments[0].Author != "bob" || d.Comments[0].ID != "C1" || d.Comments[0].Body != "nice work" {
 		t.Errorf("comments = %+v", d.Comments)
+	}
+}
+
+func TestFetchMergedPRNumbers(t *testing.T) {
+	since := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	// Node A: merged & updated after since -> included.
+	// Node B: updated after since but merged before since -> excluded, keep going.
+	// Node C: updated before since -> stop (and excluded).
+	body := `{"data":{"repository":{"pullRequests":{
+		"nodes":[
+			{"number":50,"mergedAt":"2026-06-10T10:00:00Z","updatedAt":"2026-06-10T11:00:00Z"},
+			{"number":40,"mergedAt":"2026-05-01T10:00:00Z","updatedAt":"2026-06-05T09:00:00Z"},
+			{"number":30,"mergedAt":"2026-04-01T10:00:00Z","updatedAt":"2026-05-20T09:00:00Z"}
+		],
+		"pageInfo":{"hasNextPage":false,"endCursor":null}
+	}}}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok").WithEndpoint(srv.URL)
+	got, err := c.FetchMergedPRNumbers(context.Background(), "acme", "widgets", since)
+	if err != nil {
+		t.Fatalf("FetchMergedPRNumbers: %v", err)
+	}
+	if len(got) != 1 || got[0] != 50 {
+		t.Errorf("got %v, want [50] (40 merged before since; 30 stops the scan)", got)
+	}
+}
+
+func TestSplitRepo(t *testing.T) {
+	cases := []struct {
+		in          string
+		owner, name string
+		ok          bool
+	}{
+		{"acme/widgets", "acme", "widgets", true},
+		{"noslash", "", "", false},
+		{"/leading", "", "", false},
+		{"trailing/", "", "", false},
+	}
+	for _, c := range cases {
+		o, n, ok := SplitRepo(c.in)
+		if o != c.owner || n != c.name || ok != c.ok {
+			t.Errorf("SplitRepo(%q) = (%q,%q,%v), want (%q,%q,%v)", c.in, o, n, ok, c.owner, c.name, c.ok)
+		}
 	}
 }
