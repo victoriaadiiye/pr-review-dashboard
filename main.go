@@ -75,18 +75,17 @@ func main() {
 		log.Print("digest disabled: set SLACK_BOT_TOKEN and DIGEST_CHANNEL_ID to enable")
 	}
 
-	// GitHub merge webhook: enabled only when a secret is configured.
+	// GitHub merge webhook: an optional extra trigger, enabled only when a
+	// secret is configured (scoring's primary path is the poll-based scanner).
 	var webhookHandler http.Handler
 	if cfg.WebhookSecret != "" {
 		webhookHandler = webhook.New(cfg.WebhookSecret, ing)
 		log.Print("webhook enabled at POST /webhook/github")
-	} else {
-		log.Print("webhook disabled: set WEBHOOK_SECRET to enable")
 	}
 
 	h := httpserver.New(st, httpserver.Assets(), runDigest, webhookHandler, cfg.StalePRHours)
 	addr := ":" + cfg.HealthPort
-	log.Printf("listening on %s", addr)
+	log.Printf("dashboard up at http://localhost:%s", cfg.HealthPort)
 	if err := http.ListenAndServe(addr, h); err != nil {
 		log.Fatalf("server: %v", err)
 	}
