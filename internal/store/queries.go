@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,91 @@ type LeaderRow struct {
 	Reviews     int     `json:"reviews"`
 	AvgPoints   float64 `json:"avg_points_per_review"`
 	Rank        int     `json:"rank"`
+}
+
+// HistoryRow is one reviewer's review work on one PR, scored.
+type HistoryRow struct {
+	Reviewer      string   `json:"reviewer"`
+	DisplayName   string   `json:"display_name"`
+	Repo          string   `json:"repo"`
+	PRNumber      int      `json:"pr_number"`
+	Title         string   `json:"title"`
+	URL           string   `json:"url"`
+	Author        string   `json:"author"`
+	Points        int      `json:"points"`
+	Reviews       int      `json:"reviews"`
+	States        []string `json:"states"`
+	LastSubmitted string   `json:"last_submitted"`
+}
+
+// ReviewHistory returns one row per (reviewer, PR), scored within the window,
+// newest activity first. reviewer == "" returns all reviewers. Rows are
+// anchored on review_events; standalone comment points are added when a review
+// row exists for the same (reviewer, repo, pr_number).
+func (s *Store) ReviewHistory(window, reviewer string, now time.Time) ([]HistoryRow, error) {
+	start := tsOrEmpty(WindowStart(window, now))
+	rows, err := s.db.Query(`
+SELECT rv.reviewer,
+       COALESCE(NULLIF(p.display_name, ''), rv.reviewer) AS display_name,
+       rv.repo, rv.pr_number,
+       COALESCE(pr.title, '') AS title,
+       COALESCE(pr.url, '') AS url,
+       COALESCE(pr.author, '') AS author,
+       rv.pts + COALESCE(cm.pts, 0) AS points,
+       rv.revs AS reviews,
+       rv.states AS states,
+       rv.last_submitted AS last_submitted
+FROM (
+  SELECT reviewer, repo, pr_number,
+         SUM(points) AS pts, COUNT(*) AS revs,
+         GROUP_CONCAT(DISTINCT state) AS states,
+         MAX(submitted_at) AS last_submitted
+  FROM review_events
+  WHERE (submitted_at >= ? OR ? = '')
+  GROUP BY reviewer, repo, pr_number
+) rv
+LEFT JOIN (
+  SELECT author, repo, pr_number, SUM(points) AS pts
+  FROM comment_events
+  WHERE (created_at >= ? OR ? = '')
+  GROUP BY author, repo, pr_number
+) cm ON cm.author = rv.reviewer AND cm.repo = rv.repo AND cm.pr_number = rv.pr_number
+LEFT JOIN prs pr ON pr.repo = rv.repo AND pr.pr_number = rv.pr_number
+LEFT JOIN people p ON p.login = rv.reviewer
+WHERE (rv.reviewer = ? OR ? = '')`,
+		start, start, start, start, reviewer, reviewer)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []HistoryRow
+	for rows.Next() {
+		var r HistoryRow
+		var states sql.NullString
+		if err := rows.Scan(&r.Reviewer, &r.DisplayName, &r.Repo, &r.PRNumber,
+			&r.Title, &r.URL, &r.Author, &r.Points, &r.Reviews, &states, &r.LastSubmitted); err != nil {
+			return nil, err
+		}
+		if states.String != "" {
+			r.States = strings.Split(states.String, ",")
+			sort.Strings(r.States)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].LastSubmitted != out[j].LastSubmitted {
+			return out[i].LastSubmitted > out[j].LastSubmitted // newest first (RFC3339 sorts lexically)
+		}
+		if out[i].Repo != out[j].Repo {
+			return out[i].Repo < out[j].Repo
+		}
+		return out[i].PRNumber < out[j].PRNumber
+	})
+	return out, nil
 }
 
 // QueueReviewer is a reviewer's status on a queued PR.

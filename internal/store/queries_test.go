@@ -113,6 +113,94 @@ func TestUpsertCommentEventDedupes(t *testing.T) {
 	}
 }
 
+func TestReviewHistoryAggregatesAndAddsComments(t *testing.T) {
+	st, _ := Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	st.UpsertPerson(Person{Login: "alice", DisplayName: "Alice", Team: "member", Active: true})
+	st.UpsertPR(PR{Repo: "r", Number: 1, Title: "Feat X", Author: "bob", URL: "http://pr/1"})
+	st.UpsertReviewEvent(ReviewEvent{Repo: "r", PRNumber: 1, Reviewer: "alice", State: "COMMENTED", Points: 4, RawHash: "a1", SubmittedAt: now.Add(-2 * time.Hour)})
+	st.UpsertReviewEvent(ReviewEvent{Repo: "r", PRNumber: 1, Reviewer: "alice", State: "APPROVED", Points: 3, RawHash: "a2", SubmittedAt: now.Add(-1 * time.Hour)})
+	st.UpsertCommentEvent(CommentEvent{Repo: "r", PRNumber: 1, Author: "alice", Kind: "issue", BodyLen: 300, Points: 6, RawHash: "c1", CreatedAt: now.Add(-90 * time.Minute)})
+
+	rows, err := st.ReviewHistory("all", "", now)
+	if err != nil {
+		t.Fatalf("ReviewHistory: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	r := rows[0]
+	if r.Reviewer != "alice" || r.DisplayName != "Alice" {
+		t.Errorf("identity = %+v", r)
+	}
+	if r.Points != 13 || r.Reviews != 2 {
+		t.Errorf("Points=%d Reviews=%d, want 13/2", r.Points, r.Reviews)
+	}
+	if r.Title != "Feat X" || r.URL != "http://pr/1" || r.Author != "bob" {
+		t.Errorf("pr fields = %+v", r)
+	}
+	wantStates := map[string]bool{"APPROVED": true, "COMMENTED": true}
+	if len(r.States) != 2 || !wantStates[r.States[0]] || !wantStates[r.States[1]] {
+		t.Errorf("States = %v, want APPROVED+COMMENTED", r.States)
+	}
+}
+
+func TestReviewHistoryExcludesCommentOnlyPRs(t *testing.T) {
+	st, _ := Open(":memory:")
+	defer st.Close()
+	now := time.Now()
+	st.UpsertPerson(Person{Login: "dave", DisplayName: "Dave", Team: "guest", Active: true})
+	st.UpsertCommentEvent(CommentEvent{Repo: "r", PRNumber: 9, Author: "dave", Kind: "issue", BodyLen: 10, Points: 1, RawHash: "c9", CreatedAt: now})
+	rows, err := st.ReviewHistory("all", "", now)
+	if err != nil {
+		t.Fatalf("ReviewHistory: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("rows = %d, want 0 (comment-only PR excluded)", len(rows))
+	}
+}
+
+func TestReviewHistoryFiltersByReviewerAndWindow(t *testing.T) {
+	st, _ := Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	st.UpsertPerson(Person{Login: "alice", DisplayName: "Alice", Team: "member", Active: true})
+	st.UpsertPerson(Person{Login: "dave", DisplayName: "Dave", Team: "guest", Active: true})
+	st.UpsertReviewEvent(ReviewEvent{Repo: "r", PRNumber: 1, Reviewer: "alice", State: "COMMENTED", Points: 5, RawHash: "a1", SubmittedAt: now.Add(-1 * time.Hour)})
+	st.UpsertReviewEvent(ReviewEvent{Repo: "r", PRNumber: 2, Reviewer: "alice", State: "COMMENTED", Points: 5, RawHash: "a2", SubmittedAt: now.Add(-10 * 24 * time.Hour)})
+	st.UpsertReviewEvent(ReviewEvent{Repo: "r", PRNumber: 3, Reviewer: "dave", State: "COMMENTED", Points: 5, RawHash: "d1", SubmittedAt: now.Add(-1 * time.Hour)})
+
+	rows, _ := st.ReviewHistory("all", "alice", now)
+	for _, r := range rows {
+		if r.Reviewer != "alice" {
+			t.Fatalf("reviewer filter leaked %s", r.Reviewer)
+		}
+	}
+	if len(rows) != 2 {
+		t.Errorf("alice all-time rows = %d, want 2", len(rows))
+	}
+	week, _ := st.ReviewHistory("week", "alice", now)
+	for _, r := range week {
+		if r.PRNumber == 2 {
+			t.Errorf("week window leaked old PR #2")
+		}
+	}
+}
+
+func TestReviewHistoryNewestFirst(t *testing.T) {
+	st, _ := Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	st.UpsertPerson(Person{Login: "alice", DisplayName: "Alice", Team: "member", Active: true})
+	st.UpsertReviewEvent(ReviewEvent{Repo: "r", PRNumber: 1, Reviewer: "alice", State: "COMMENTED", Points: 1, RawHash: "old", SubmittedAt: now.Add(-5 * time.Hour)})
+	st.UpsertReviewEvent(ReviewEvent{Repo: "r", PRNumber: 2, Reviewer: "alice", State: "COMMENTED", Points: 1, RawHash: "new", SubmittedAt: now.Add(-1 * time.Hour)})
+	rows, _ := st.ReviewHistory("all", "", now)
+	if len(rows) != 2 || rows[0].PRNumber != 2 {
+		t.Errorf("order = %+v, want PR#2 (newest) first", rows)
+	}
+}
+
 func TestQueueDerivesReviewerStatus(t *testing.T) {
 	s := seed(t)
 	defer s.Close()
