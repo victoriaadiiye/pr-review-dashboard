@@ -118,6 +118,5 @@ only.
 ## Roadmap
 
 - **Phase 2** ✅ — scheduled Slack digest (top of the board + stale PRs). See [Slack digest](#slack-digest).
-- **Phase 3** — peer "👍 helpful" bonus via Slack reactions.
 - Real `/metrics` counters, closed-PR pruning, roster-leaver deactivation, and
   rendering team-requested reviewers as team chips.
