@@ -51,7 +51,9 @@ const hrs = (h: number) => (h >= 48 ? `${Math.round(h / 24)}d` : `${Math.round(h
   text-decoration: none;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-left: 3px solid var(--border);
+  border-left-width: 3px;
+  border-left-style: solid;
+  border-left-color: var(--border);
   border-radius: var(--radius-lg);
   padding: var(--space-s) var(--space-m);
   transition:
@@ -151,6 +153,9 @@ const hrs = (h: number) => (h >= 48 ? `${Math.round(h / 24)}d` : `${Math.round(h
   color: var(--tone-comment);
   background: color-mix(in srgb, var(--tone-comment) 14%, transparent);
   border-color: color-mix(in srgb, var(--tone-comment) 30%, transparent);
+}
+.chip--pending {
+  color: var(--fg-subtle);
 }
 .chip--new {
   margin-left: var(--space-2xs);
