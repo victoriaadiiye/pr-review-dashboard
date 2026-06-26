@@ -42,7 +42,7 @@ func (d *Digest) Run(ctx context.Context, now time.Time) error {
 	}
 	var stale []store.QueueRow
 	for _, q := range queue {
-		if q.AgeHours > d.staleHours && isAwaiting(q) {
+		if q.AgeHours > d.staleHours && q.Awaiting {
 			stale = append(stale, q)
 		}
 	}
@@ -51,22 +51,6 @@ func (d *Digest) Run(ctx context.Context, now time.Time) error {
 
 // topN caps how many leaders the digest lists.
 const topN = 5
-
-// isAwaiting reports whether a queued PR still needs review: it has no
-// reviewers yet, or a requested reviewer has only left a comment or not
-// reviewed at all (status pending or commented). A PR with an approval or
-// changes-requested review is not awaiting.
-func isAwaiting(q store.QueueRow) bool {
-	if len(q.Reviewers) == 0 {
-		return true
-	}
-	for _, rv := range q.Reviewers {
-		if rv.Status == "pending" || rv.Status == "commented" {
-			return true
-		}
-	}
-	return false
-}
 
 // BuildMessage renders the Slack mrkdwn digest: the weekly top-N leaderboard
 // followed by stale PRs awaiting review. stale is assumed pre-filtered to PRs
