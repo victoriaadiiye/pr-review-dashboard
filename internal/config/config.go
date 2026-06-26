@@ -25,6 +25,7 @@ type Config struct {
 	SlackBotToken   string
 	DigestChannelID string
 	StalePRHours    float64
+	WebhookSecret   string
 }
 
 type projectsFile struct {
@@ -46,7 +47,11 @@ func Load(projectsPath string) (Config, error) {
 		SlackBotToken:   os.Getenv("SLACK_BOT_TOKEN"),
 		DigestChannelID: os.Getenv("DIGEST_CHANNEL_ID"),
 		StalePRHours:    floatOr("STALE_PR_HOURS", 48),
+		WebhookSecret:   os.Getenv("WEBHOOK_SECRET"),
 	}
+	c.Weights.ImageBonus = intOr("SCORE_IMAGE_BONUS", c.Weights.ImageBonus)
+	c.Weights.MessageBump = intOr("SCORE_MESSAGE_BUMP", c.Weights.MessageBump)
+	c.Weights.CommentBase = intOr("SCORE_COMMENT_BASE", c.Weights.CommentBase)
 	// REPOS env var takes precedence over the projects file.
 	if repos := parseRepos(os.Getenv("REPOS")); len(repos) > 0 {
 		c.Repos = repos
@@ -111,6 +116,15 @@ func floatOr(key string, def float64) float64 {
 	if v := os.Getenv(key); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			return f
+		}
+	}
+	return def
+}
+
+func intOr(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
 		}
 	}
 	return def
