@@ -14,6 +14,7 @@ import (
 	"pr-review-dashboard/internal/httpserver"
 	"pr-review-dashboard/internal/poller"
 	"pr-review-dashboard/internal/store"
+	"pr-review-dashboard/internal/webhook"
 )
 
 func main() {
@@ -30,7 +31,7 @@ func main() {
 	}
 	defer st.Close()
 
-	p := poller.New(github.NewClient(cfg.GitHubToken), st, cfg.Weights)
+	p := poller.New(github.NewClient(cfg.GitHubToken), st)
 
 	// Background sync loop.
 	go func() {
@@ -60,7 +61,16 @@ func main() {
 		log.Print("digest disabled: set SLACK_BOT_TOKEN and DIGEST_CHANNEL_ID to enable")
 	}
 
-	h := httpserver.New(st, httpserver.Assets(), runDigest, nil)
+	// GitHub merge webhook: enabled only when a secret is configured.
+	var webhookHandler http.Handler
+	if cfg.WebhookSecret != "" {
+		webhookHandler = webhook.New(cfg.WebhookSecret, github.NewClient(cfg.GitHubToken), st, cfg.Weights)
+		log.Print("webhook enabled at POST /webhook/github")
+	} else {
+		log.Print("webhook disabled: set WEBHOOK_SECRET to enable")
+	}
+
+	h := httpserver.New(st, httpserver.Assets(), runDigest, webhookHandler)
 	addr := ":" + cfg.HealthPort
 	log.Printf("listening on %s", addr)
 	if err := http.ListenAndServe(addr, h); err != nil {
