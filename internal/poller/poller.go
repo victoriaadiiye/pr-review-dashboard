@@ -5,7 +5,9 @@ package poller
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"pr-review-dashboard/internal/github"
 	"pr-review-dashboard/internal/store"
@@ -46,6 +48,11 @@ func (p *Poller) SyncRepo(ctx context.Context, repo string) error {
 			Repo: repo, Number: fp.Number, Title: fp.Title, Author: fp.Author, URL: fp.URL,
 			IsDraft: fp.IsDraft, ReadyAt: fp.ReadyAt, MergedAt: fp.MergedAt, UpdatedAt: fp.UpdatedAt,
 			RequestedReviewers: fp.RequestedReviewers,
+			Additions:          fp.Additions,
+			Deletions:          fp.Deletions,
+			ChangedFiles:       fp.ChangedFiles,
+			LastActivity:       lastActivity(fp),
+			Reviewers:          buildReviewers(fp),
 		}); err != nil {
 			return err
 		}
@@ -84,6 +91,78 @@ func (p *Poller) SyncRoster(ctx context.Context, team string) error {
 		}
 	}
 	return nil
+}
+
+// mapReviewState maps a GitHub review state to the queue's status vocabulary.
+func mapReviewState(s string) string {
+	switch s {
+	case "APPROVED":
+		return "approved"
+	case "CHANGES_REQUESTED":
+		return "changes"
+	case "COMMENTED":
+		return "commented"
+	default:
+		return "pending"
+	}
+}
+
+// buildReviewers derives per-reviewer status for an open PR. A currently
+// requested reviewer is pending (they owe a review now) and flagged
+// re_requested if they have a prior review; a reviewer who reviewed but is not
+// currently requested keeps their latest state. The PR author is excluded.
+func buildReviewers(fp github.FetchedPR) []store.QueueReviewer {
+	type rev struct {
+		state string
+		at    time.Time
+	}
+	latest := map[string]rev{}
+	for _, r := range fp.Reviews {
+		if r.Author == "" || r.Author == fp.Author {
+			continue
+		}
+		if cur, ok := latest[r.Author]; !ok || r.SubmittedAt.After(cur.at) {
+			latest[r.Author] = rev{state: r.State, at: r.SubmittedAt}
+		}
+	}
+	requested := map[string]bool{}
+	var reqList []string
+	for _, l := range fp.RequestedReviewers {
+		if l == "" || l == fp.Author || requested[l] {
+			continue
+		}
+		requested[l] = true
+		reqList = append(reqList, l)
+	}
+	var revList []string
+	for l := range latest {
+		if !requested[l] {
+			revList = append(revList, l)
+		}
+	}
+	sort.Strings(reqList)
+	sort.Strings(revList)
+
+	out := make([]store.QueueReviewer, 0, len(reqList)+len(revList))
+	for _, l := range reqList {
+		_, reviewed := latest[l]
+		out = append(out, store.QueueReviewer{Login: l, Status: "pending", ReRequested: reviewed})
+	}
+	for _, l := range revList {
+		out = append(out, store.QueueReviewer{Login: l, Status: mapReviewState(latest[l].state)})
+	}
+	return out
+}
+
+// lastActivity is the most recent of the PR's updatedAt and any review time.
+func lastActivity(fp github.FetchedPR) time.Time {
+	t := fp.UpdatedAt
+	for _, r := range fp.Reviews {
+		if r.SubmittedAt.After(t) {
+			t = r.SubmittedAt
+		}
+	}
+	return t
 }
 
 func splitRepo(s string) (string, string, bool) {
