@@ -52,6 +52,7 @@ type FetchedPR struct {
 	UpdatedAt          time.Time
 	RequestedReviewers []string
 	Reviews            []FetchedReview
+	CommitDates        []time.Time // committedDate of recent commits, for "new commits since review"
 	Additions          int
 	Deletions          int
 	ChangedFiles       int
@@ -103,6 +104,7 @@ query($owner:String!,$repo:String!,$cursor:String){
         createdAt updatedAt mergedAt
         reviewRequests(first:20){nodes{requestedReviewer{... on User{login}}}}
         reviews(first:50){nodes{id author{login} state submittedAt body comments{totalCount}}}
+        commits(last:30){nodes{commit{committedDate}}}
       }
       pageInfo{hasNextPage endCursor}
     }
@@ -140,6 +142,13 @@ type prGQL struct {
 							Comments    struct{ TotalCount int } `json:"comments"`
 						} `json:"nodes"`
 					} `json:"reviews"`
+					Commits struct {
+						Nodes []struct {
+							Commit struct {
+								CommittedDate *time.Time `json:"committedDate"`
+							} `json:"commit"`
+						} `json:"nodes"`
+					} `json:"commits"`
 				} `json:"nodes"`
 				PageInfo struct {
 					HasNextPage bool    `json:"hasNextPage"`
@@ -184,6 +193,11 @@ func (c *Client) FetchPullRequests(ctx context.Context, owner, repo string) ([]F
 				}
 				p.Reviews = append(p.Reviews, fr)
 			}
+			for _, c := range n.Commits.Nodes {
+				if c.Commit.CommittedDate != nil {
+					p.CommitDates = append(p.CommitDates, *c.Commit.CommittedDate)
+				}
+			}
 			out = append(out, p)
 		}
 		pi := resp.Data.Repository.PullRequests.PageInfo
@@ -215,6 +229,9 @@ type FetchedComment struct {
 type FetchedPRDetail struct {
 	Number   int
 	Author   string
+	Title    string
+	URL      string
+	MergedAt *time.Time
 	Reviews  []FetchedReview
 	Comments []FetchedComment
 }
@@ -224,6 +241,9 @@ query($owner:String!,$repo:String!,$number:Int!){
   repository(owner:$owner,name:$repo){
     pullRequest(number:$number){
       number
+      title
+      url
+      mergedAt
       author{login}
       reviews(first:100){nodes{id author{login} state submittedAt body comments{totalCount}}}
       comments(first:100){nodes{id author{login} body createdAt}}
@@ -235,9 +255,12 @@ type prDetailGQL struct {
 	Data struct {
 		Repository struct {
 			PullRequest struct {
-				Number  int                     `json:"number"`
-				Author  *struct{ Login string } `json:"author"`
-				Reviews struct {
+				Number   int                     `json:"number"`
+				Title    string                  `json:"title"`
+				URL      string                  `json:"url"`
+				MergedAt *time.Time              `json:"mergedAt"`
+				Author   *struct{ Login string } `json:"author"`
+				Reviews  struct {
 					Nodes []struct {
 						ID          string                   `json:"id"`
 						Author      *struct{ Login string }  `json:"author"`
@@ -269,7 +292,10 @@ func (c *Client) FetchPullRequest(ctx context.Context, owner, repo string, numbe
 		return FetchedPRDetail{}, err
 	}
 	pr := resp.Data.Repository.PullRequest
-	d := FetchedPRDetail{Number: pr.Number, Author: login(pr.Author)}
+	d := FetchedPRDetail{
+		Number: pr.Number, Author: login(pr.Author),
+		Title: pr.Title, URL: pr.URL, MergedAt: pr.MergedAt,
+	}
 	for _, rv := range pr.Reviews.Nodes {
 		fr := FetchedReview{
 			ID: rv.ID, Author: login(rv.Author), State: rv.State, Body: rv.Body,

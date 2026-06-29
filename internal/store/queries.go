@@ -85,6 +85,9 @@ WHERE (rv.reviewer = ? OR ? = '')`,
 			&r.Title, &r.URL, &r.Author, &r.Points, &r.Reviews, &states, &r.LastSubmitted); err != nil {
 			return nil, err
 		}
+		if s.isExcluded(r.Reviewer) {
+			continue // bots and service accounts never appear in review history
+		}
 		if states.String != "" {
 			r.States = strings.Split(states.String, ",")
 			sort.Strings(r.States)
@@ -125,6 +128,7 @@ type QueueRow struct {
 	Additions         int             `json:"additions"`
 	Deletions         int             `json:"deletions"`
 	ChangedFiles      int             `json:"changed_files"`
+	CommitsSinceReview int            `json:"commits_since_review"`
 	Awaiting          bool            `json:"awaiting"`
 	Tier              string          `json:"tier"`
 	Reviewers         []QueueReviewer `json:"reviewers"`
@@ -140,10 +144,11 @@ func WindowStart(window string, now time.Time) time.Time {
 	n := now.In(loc)
 	switch window {
 	case "week":
-		// Monday 00:00.
-		offset := (int(n.Weekday()) + 6) % 7 // Mon=0
-		d := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -offset)
-		return d
+		// Rolling last 7 days (not calendar week): the leaderboard must never
+		// reset to zero at the start of a calendar week. Anchored to 00:00 so
+		// the boundary is stable through the day.
+		today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, loc)
+		return today.AddDate(0, 0, -6) // today + 6 prior days = 7-day window
 	case "month":
 		return time.Date(n.Year(), n.Month(), 1, 0, 0, 0, 0, loc)
 	default: // all
@@ -182,6 +187,9 @@ WHERE p.active = 1
 		if err := rows.Scan(&r.Login, &r.DisplayName, &r.Team, &r.Points, &r.Reviews); err != nil {
 			return nil, err
 		}
+		if s.isExcluded(r.Login) {
+			continue // bots and service accounts never appear on the leaderboard
+		}
 		r.IsGuest = r.Team != "member"
 		if r.Reviews > 0 {
 			r.AvgPoints = float64(r.Points) / float64(r.Reviews)
@@ -207,6 +215,7 @@ type prSeed struct {
 	readyAt, lastActivity    string
 	additions, deletions     int
 	changedFiles             int
+	commitsSinceReview       int
 	reviewersJSON            string
 }
 
@@ -215,7 +224,7 @@ type prSeed struct {
 func (s *Store) Queue(now time.Time) ([]QueueRow, error) {
 	rows, err := s.db.Query(`
 SELECT repo, pr_number, title, author, url, ready_at, last_activity,
-       additions, deletions, changed_files, reviewers_json
+       additions, deletions, changed_files, commits_since_review, reviewers_json
 FROM prs
 WHERE is_draft = 0 AND merged_at = ''
 ORDER BY ready_at DESC`)
@@ -227,7 +236,7 @@ ORDER BY ready_at DESC`)
 		var p prSeed
 		var lastActivity, reviewersJSON sql.NullString
 		if err := rows.Scan(&p.repo, &p.prNumber, &p.title, &p.author, &p.url, &p.readyAt,
-			&lastActivity, &p.additions, &p.deletions, &p.changedFiles, &reviewersJSON); err != nil {
+			&lastActivity, &p.additions, &p.deletions, &p.changedFiles, &p.commitsSinceReview, &reviewersJSON); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -247,6 +256,7 @@ ORDER BY ready_at DESC`)
 		q := QueueRow{
 			Repo: p.repo, PRNumber: p.prNumber, Title: p.title, Author: p.author, URL: p.url,
 			Additions: p.additions, Deletions: p.deletions, ChangedFiles: p.changedFiles,
+			CommitsSinceReview: p.commitsSinceReview,
 		}
 		if t, err := time.Parse(time.RFC3339, p.readyAt); err == nil {
 			q.AgeHours = now.Sub(t).Hours()
@@ -329,6 +339,9 @@ func (s *Store) DistinctReviewers() ([]string, error) {
 		var r string
 		if err := rows.Scan(&r); err != nil {
 			return nil, err
+		}
+		if s.isExcluded(r) {
+			continue // keep bots out of the reviewer filter
 		}
 		out = append(out, r)
 	}

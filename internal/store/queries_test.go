@@ -188,6 +188,43 @@ func TestReviewHistoryFiltersByReviewerAndWindow(t *testing.T) {
 	}
 }
 
+func TestLeaderboardExcludesBots(t *testing.T) {
+	s := seed(t)
+	defer s.Close()
+	// dave is a guest reviewer with points; treat it as a bot to exclude.
+	s.SetExcludedLogins([]string{"DAVE"}) // case-insensitive
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	rows, err := s.Leaderboard("week", now)
+	if err != nil {
+		t.Fatalf("leaderboard: %v", err)
+	}
+	for _, r := range rows {
+		if r.Login == "dave" {
+			t.Fatalf("excluded login dave leaked onto leaderboard: %+v", rows)
+		}
+	}
+	// alice (13) and carol (0) remain; ranks stay gap-free.
+	if len(rows) != 2 || rows[0].Login != "alice" || rows[0].Rank != 1 || rows[1].Rank != 2 {
+		t.Errorf("rows = %+v, want alice(1), carol(2)", rows)
+	}
+}
+
+func TestWindowStartWeekIsRolling7Days(t *testing.T) {
+	// Regression: "week" must be a rolling 7-day window, not a Monday-anchored
+	// calendar week — otherwise the leaderboard resets to zero every Monday.
+	// On a Monday, a review from the previous Friday must still be in-window.
+	monday := time.Date(2026, 6, 29, 9, 0, 0, 0, time.UTC) // a Monday
+	start := WindowStart("week", monday)
+	friday := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	if !friday.After(start) {
+		t.Errorf("WindowStart(week) = %v; Friday %v should be in-window on a Monday", start, friday)
+	}
+	// And it should not reach back more than ~7 days.
+	if monday.Sub(start) > 8*24*time.Hour {
+		t.Errorf("WindowStart(week) reaches back %v, want ~7 days", monday.Sub(start))
+	}
+}
+
 func TestReviewHistoryNewestFirst(t *testing.T) {
 	st, _ := Open(":memory:")
 	defer st.Close()

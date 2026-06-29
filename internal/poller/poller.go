@@ -43,6 +43,7 @@ func (p *Poller) SyncRepo(ctx context.Context, repo string) error {
 	if err != nil {
 		return err
 	}
+	open := make([]int, 0, len(prs))
 	for _, fp := range prs {
 		if err := p.st.UpsertPR(store.PR{
 			Repo: repo, Number: fp.Number, Title: fp.Title, Author: fp.Author, URL: fp.URL,
@@ -53,11 +54,16 @@ func (p *Poller) SyncRepo(ctx context.Context, repo string) error {
 			ChangedFiles:       fp.ChangedFiles,
 			LastActivity:       lastActivity(fp),
 			Reviewers:          buildReviewers(fp),
+			CommitsSinceReview: commitsSinceReview(fp),
 		}); err != nil {
 			return err
 		}
+		open = append(open, fp.Number)
 	}
-	return nil
+	// GitHub's open-PR list is authoritative: any stored PR for this repo that is
+	// no longer in it has merged or closed, so drop it from the queue. Without
+	// this, a PR that merges between polls lingers in the queue forever.
+	return p.st.MarkRepoPRsClosedExcept(repo, open, time.Now())
 }
 
 // SyncRoster pulls team ("org/slug") members as member, and tags any other reviewer
@@ -152,6 +158,31 @@ func buildReviewers(fp github.FetchedPR) []store.QueueReviewer {
 		out = append(out, store.QueueReviewer{Login: l, Status: mapReviewState(latest[l].state)})
 	}
 	return out
+}
+
+// commitsSinceReview counts commits pushed after the most recent review by a
+// non-author reviewer. It is 0 when the PR has no such review (nothing to be
+// "since") — the signal is "the author pushed changes the reviewers haven't seen".
+func commitsSinceReview(fp github.FetchedPR) int {
+	var lastReview time.Time
+	for _, r := range fp.Reviews {
+		if r.Author == "" || r.Author == fp.Author {
+			continue
+		}
+		if r.SubmittedAt.After(lastReview) {
+			lastReview = r.SubmittedAt
+		}
+	}
+	if lastReview.IsZero() {
+		return 0
+	}
+	n := 0
+	for _, c := range fp.CommitDates {
+		if c.After(lastReview) {
+			n++
+		}
+	}
+	return n
 }
 
 // lastActivity is the most recent of the PR's updatedAt and any review time.

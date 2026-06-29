@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	"pr-review-dashboard/internal/github"
 	"pr-review-dashboard/internal/scorer"
@@ -40,6 +41,17 @@ func (i *Ingester) ScorePR(ctx context.Context, fullName, owner, repo string, nu
 	d, err := i.fetcher.FetchPullRequest(ctx, owner, repo, number)
 	if err != nil {
 		return fmt.Errorf("fetch: %w", err)
+	}
+	// Persist the PR's identifying fields so history can resolve its title after
+	// merge — merge-scanned PRs are otherwise absent from the prs table.
+	if d.Title != "" {
+		var mergedAt time.Time
+		if d.MergedAt != nil {
+			mergedAt = *d.MergedAt
+		}
+		if err := i.st.RecordPRRef(fullName, number, d.Title, d.URL, d.Author, mergedAt); err != nil {
+			return fmt.Errorf("record pr ref: %w", err)
+		}
 	}
 	for _, rv := range d.Reviews {
 		if rv.Author == "" {

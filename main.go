@@ -32,6 +32,7 @@ func main() {
 		log.Fatalf("store: %v", err)
 	}
 	defer st.Close()
+	st.SetExcludedLogins(cfg.ExcludedLogins)
 
 	gh := github.NewClient(cfg.GitHubToken)
 	ing := ingest.New(gh, st, cfg.Weights)

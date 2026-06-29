@@ -12,7 +12,26 @@ import (
 
 // Store wraps the SQLite database.
 type Store struct {
-	db *sql.DB
+	db       *sql.DB
+	excluded map[string]bool // logins hidden from leaderboard/history (bots, service accounts)
+}
+
+// SetExcludedLogins sets the denylist of logins to hide from the leaderboard,
+// review history, and reviewer filter (bots and service accounts). Matching is
+// case-insensitive. Safe to call once at startup before serving.
+func (s *Store) SetExcludedLogins(logins []string) {
+	m := make(map[string]bool, len(logins))
+	for _, l := range logins {
+		if l = strings.TrimSpace(l); l != "" {
+			m[strings.ToLower(l)] = true
+		}
+	}
+	s.excluded = m
+}
+
+// isExcluded reports whether a login is on the denylist (case-insensitive).
+func (s *Store) isExcluded(login string) bool {
+	return s.excluded[strings.ToLower(login)]
 }
 
 // ReviewEvent is one submitted review, already scored.
@@ -46,6 +65,7 @@ type PR struct {
 	ChangedFiles       int
 	LastActivity       time.Time
 	Reviewers          []QueueReviewer
+	CommitsSinceReview int
 }
 
 // Person is a roster entry (team member or guest reviewer).
@@ -73,6 +93,7 @@ CREATE TABLE IF NOT EXISTS prs (
   changed_files INTEGER NOT NULL DEFAULT 0,
   last_activity TEXT,
   reviewers_json TEXT,
+  commits_since_review INTEGER NOT NULL DEFAULT 0,
   last_synced TEXT,
   PRIMARY KEY (repo, pr_number)
 );
@@ -197,19 +218,62 @@ func (s *Store) UpsertPR(p PR) error {
 	_, err = s.db.Exec(`
 INSERT INTO prs
   (repo, pr_number, title, author, url, is_draft, ready_at, merged_at, updated_at,
-   requested_reviewers, additions, deletions, changed_files, last_activity, reviewers_json, last_synced)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   requested_reviewers, additions, deletions, changed_files, last_activity, reviewers_json,
+   commits_since_review, last_synced)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(repo, pr_number) DO UPDATE SET
   title=excluded.title, author=excluded.author, url=excluded.url,
   is_draft=excluded.is_draft, ready_at=excluded.ready_at, merged_at=excluded.merged_at,
   updated_at=excluded.updated_at, requested_reviewers=excluded.requested_reviewers,
   additions=excluded.additions, deletions=excluded.deletions, changed_files=excluded.changed_files,
   last_activity=excluded.last_activity, reviewers_json=excluded.reviewers_json,
+  commits_since_review=excluded.commits_since_review,
   last_synced=excluded.last_synced`,
 		p.Repo, p.Number, p.Title, p.Author, p.URL, boolToInt(p.IsDraft),
 		tsOrEmpty(p.ReadyAt), tsOrEmpty(p.MergedAt), tsOrEmpty(p.UpdatedAt),
 		strings.Join(p.RequestedReviewers, ","), p.Additions, p.Deletions, p.ChangedFiles,
-		tsOrEmpty(p.LastActivity), string(revJSON), tsOrEmpty(time.Now()))
+		tsOrEmpty(p.LastActivity), string(revJSON), p.CommitsSinceReview, tsOrEmpty(time.Now()))
+	return err
+}
+
+// RecordPRRef persists the identifying fields of a PR (title, url, author,
+// merged_at) so history rows can resolve a title after merge. Unlike UpsertPR
+// it only touches these columns on conflict, leaving queue-only columns
+// (additions, reviewers_json, …) intact for PRs already snapshotted by the
+// poller. Used by the merge-scan ingest path, whose PRs are otherwise absent
+// from the prs table.
+func (s *Store) RecordPRRef(repo string, number int, title, url, author string, mergedAt time.Time) error {
+	_, err := s.db.Exec(`
+INSERT INTO prs (repo, pr_number, title, author, url, merged_at, last_synced)
+VALUES (?,?,?,?,?,?,?)
+ON CONFLICT(repo, pr_number) DO UPDATE SET
+  title=excluded.title, author=excluded.author, url=excluded.url,
+  merged_at=excluded.merged_at, last_synced=excluded.last_synced`,
+		repo, number, title, author, url, tsOrEmpty(mergedAt), tsOrEmpty(time.Now()))
+	return err
+}
+
+// MarkRepoPRsClosedExcept marks every still-"open" stored PR for repo whose
+// number is NOT in openNumbers as no longer open, by stamping merged_at. The
+// queue shows only merged_at='' rows, so this drops PRs that have merged or
+// closed since they were snapshotted. The poller calls it each cycle with the
+// authoritative open set fetched from GitHub.
+//
+// It is self-correcting: if a PR is in fact still open, the next poll re-upserts
+// it with merged_at='' (UpsertPR), undoing a stamp from a transient empty fetch.
+// Passing an empty openNumbers marks all of the repo's open rows closed.
+func (s *Store) MarkRepoPRsClosedExcept(repo string, openNumbers []int, now time.Time) error {
+	args := []any{tsOrEmpty(now), repo}
+	q := `UPDATE prs SET merged_at = ? WHERE repo = ? AND merged_at = ''`
+	if len(openNumbers) > 0 {
+		ph := make([]string, len(openNumbers))
+		for i, n := range openNumbers {
+			ph[i] = "?"
+			args = append(args, n)
+		}
+		q += ` AND pr_number NOT IN (` + strings.Join(ph, ",") + `)`
+	}
+	_, err := s.db.Exec(q, args...)
 	return err
 }
 
@@ -259,6 +323,7 @@ func migrate(db *sql.DB) error {
 		{"changed_files", "ALTER TABLE prs ADD COLUMN changed_files INTEGER NOT NULL DEFAULT 0"},
 		{"last_activity", "ALTER TABLE prs ADD COLUMN last_activity TEXT"},
 		{"reviewers_json", "ALTER TABLE prs ADD COLUMN reviewers_json TEXT"},
+		{"commits_since_review", "ALTER TABLE prs ADD COLUMN commits_since_review INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if !hasColumn(db, "prs", col.name) {
 			if _, err := db.Exec(col.ddl); err != nil {

@@ -27,6 +27,22 @@ type Config struct {
 	StalePRHours    float64
 	WebhookSecret   string
 	BackfillDays    int
+	ExcludedLogins  []string
+}
+
+// defaultExcludedLogins are bot / service accounts hidden from the leaderboard,
+// history, and reviewer filter by default. Extend or override via the
+// EXCLUDED_LOGINS env var (comma-separated, replaces this list).
+var defaultExcludedLogins = []string{
+	"github-actions",
+	"github-actions[bot]",
+	"qompass-pr-review-bot",
+	"oseoin",
+	"graphite-app",
+	"dependabot",
+	"dependabot[bot]",
+	"renovate",
+	"renovate[bot]",
 }
 
 type projectsFile struct {
@@ -50,6 +66,10 @@ func Load(projectsPath string) (Config, error) {
 		StalePRHours:    floatOr("STALE_PR_HOURS", 48),
 		WebhookSecret:   os.Getenv("WEBHOOK_SECRET"),
 		BackfillDays:    intOr("BACKFILL_DAYS", 30),
+		ExcludedLogins:  defaultExcludedLogins,
+	}
+	if ex := parseRepos(os.Getenv("EXCLUDED_LOGINS")); len(ex) > 0 {
+		c.ExcludedLogins = ex // env override replaces defaults
 	}
 	c.Weights.ImageBonus = intOr("SCORE_IMAGE_BONUS", c.Weights.ImageBonus)
 	c.Weights.MessageBump = intOr("SCORE_MESSAGE_BUMP", c.Weights.MessageBump)
