@@ -44,6 +44,7 @@ func main() {
 	}
 
 	p := poller.New(gh, st)
+	p.SetExcludedLogins(cfg.ExcludedLogins)
 
 	// Background sync loop.
 	go func() {

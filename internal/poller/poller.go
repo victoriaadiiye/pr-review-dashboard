@@ -23,13 +23,26 @@ type Source interface {
 // snapshots open PRs for the queue and syncs the roster; scoring happens in the
 // merge webhook.
 type Poller struct {
-	src Source
-	st  *store.Store
+	src      Source
+	st       *store.Store
+	excluded map[string]bool // bot/service logins kept out of queue reviewer chips
 }
 
 // New constructs a Poller.
 func New(src Source, st *store.Store) *Poller {
 	return &Poller{src: src, st: st}
+}
+
+// SetExcludedLogins hides bot/service accounts from the queue's reviewer chips
+// (case-insensitive). Mirrors Store.SetExcludedLogins; call once at startup.
+func (p *Poller) SetExcludedLogins(logins []string) {
+	m := make(map[string]bool, len(logins))
+	for _, l := range logins {
+		if l = strings.TrimSpace(l); l != "" {
+			m[strings.ToLower(l)] = true
+		}
+	}
+	p.excluded = m
 }
 
 // SyncRepo fetches open PRs for repo ("owner/name") and snapshots them for the
@@ -53,7 +66,7 @@ func (p *Poller) SyncRepo(ctx context.Context, repo string) error {
 			Deletions:          fp.Deletions,
 			ChangedFiles:       fp.ChangedFiles,
 			LastActivity:       lastActivity(fp),
-			Reviewers:          buildReviewers(fp),
+			Reviewers:          buildReviewers(fp, p.excluded),
 			CommitsSinceReview: commitsSinceReview(fp),
 		}); err != nil {
 			return err
@@ -99,65 +112,103 @@ func (p *Poller) SyncRoster(ctx context.Context, team string) error {
 	return nil
 }
 
-// mapReviewState maps a GitHub review state to the queue's status vocabulary.
-func mapReviewState(s string) string {
-	switch s {
-	case "APPROVED":
-		return "approved"
-	case "CHANGES_REQUESTED":
-		return "changes"
-	case "COMMENTED":
-		return "commented"
-	default:
-		return "pending"
+// buildReviewers derives per-reviewer status for an open PR. Participants are
+// the union of currently-requested reviewers, anyone who submitted a review, and
+// anyone who left an issue comment (bots in excluded and the PR author are
+// dropped). Status precedence per person:
+//
+//   - approved / changes  — their latest formal review verdict
+//   - commented           — they engaged (a COMMENTED review or an issue
+//     comment) but gave no approve/changes verdict; treated as a light
+//     changes-requested rather than "still waiting"
+//   - pending             — requested but no engagement at all
+//
+// re_requested marks a currently-requested reviewer who has a prior review
+// (the author asked them to look again).
+func buildReviewers(fp github.FetchedPR, excluded map[string]bool) []store.QueueReviewer {
+	skip := func(login string) bool {
+		return login == "" || login == fp.Author || excluded[strings.ToLower(login)]
 	}
-}
 
-// buildReviewers derives per-reviewer status for an open PR. A currently
-// requested reviewer is pending (they owe a review now) and flagged
-// re_requested if they have a prior review; a reviewer who reviewed but is not
-// currently requested keeps their latest state. The PR author is excluded.
-func buildReviewers(fp github.FetchedPR) []store.QueueReviewer {
 	type rev struct {
 		state string
 		at    time.Time
 	}
 	latest := map[string]rev{}
 	for _, r := range fp.Reviews {
-		if r.Author == "" || r.Author == fp.Author {
+		if skip(r.Author) {
 			continue
 		}
 		if cur, ok := latest[r.Author]; !ok || r.SubmittedAt.After(cur.at) {
 			latest[r.Author] = rev{state: r.State, at: r.SubmittedAt}
 		}
 	}
+	commented := map[string]bool{}
+	for _, c := range fp.Comments {
+		if skip(c.Author) {
+			continue
+		}
+		commented[c.Author] = true
+	}
 	requested := map[string]bool{}
-	var reqList []string
 	for _, l := range fp.RequestedReviewers {
-		if l == "" || l == fp.Author || requested[l] {
+		if skip(l) {
 			continue
 		}
 		requested[l] = true
-		reqList = append(reqList, l)
 	}
-	var revList []string
-	for l := range latest {
-		if !requested[l] {
-			revList = append(revList, l)
+
+	// Ordered, de-duplicated participant list: requested first, then everyone
+	// else who reviewed or commented.
+	seen := map[string]bool{}
+	var participants []string
+	add := func(l string) {
+		if !seen[l] {
+			seen[l] = true
+			participants = append(participants, l)
 		}
 	}
-	sort.Strings(reqList)
-	sort.Strings(revList)
-
-	out := make([]store.QueueReviewer, 0, len(reqList)+len(revList))
-	for _, l := range reqList {
-		_, reviewed := latest[l]
-		out = append(out, store.QueueReviewer{Login: l, Status: "pending", ReRequested: reviewed})
+	for l := range requested {
+		add(l)
 	}
-	for _, l := range revList {
-		out = append(out, store.QueueReviewer{Login: l, Status: mapReviewState(latest[l].state)})
+	for l := range latest {
+		add(l)
+	}
+	for l := range commented {
+		add(l)
+	}
+	sort.Strings(participants)
+
+	out := make([]store.QueueReviewer, 0, len(participants))
+	for _, l := range participants {
+		r, reviewed := latest[l]
+		out = append(out, store.QueueReviewer{
+			Login:       l,
+			Status:      statusFor(r.state, reviewed, commented[l]),
+			ReRequested: requested[l] && reviewed,
+		})
 	}
 	return out
+}
+
+// statusFor resolves a participant's queue status. A formal approve/changes
+// verdict wins; otherwise any comment activity (a COMMENTED review or an issue
+// comment) reads as "commented"; with no engagement it is "pending".
+func statusFor(state string, reviewed, commented bool) string {
+	if reviewed {
+		switch state {
+		case "APPROVED":
+			return "approved"
+		case "CHANGES_REQUESTED":
+			return "changes"
+		default: // COMMENTED / unknown review state
+			return "commented"
+		}
+	}
+	if commented {
+		return "commented"
+	}
+	return "pending"
 }
 
 // commitsSinceReview counts commits pushed after the most recent review by a

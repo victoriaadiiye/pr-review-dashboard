@@ -127,7 +127,7 @@ func TestBuildReviewers(t *testing.T) {
 			{Author: "alice", State: "APPROVED", SubmittedAt: base},                        // self — excluded
 		},
 	}
-	got := buildReviewers(fp)
+	got := buildReviewers(fp, nil)
 	by := map[string]store.QueueReviewer{}
 	for _, r := range got {
 		by[r.Login] = r
@@ -135,8 +135,9 @@ func TestBuildReviewers(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("got %d reviewers, want 3 (bob, carol, dave): %+v", len(got), got)
 	}
-	if by["bob"].Status != "pending" || !by["bob"].ReRequested {
-		t.Errorf("bob = %+v, want pending + re_requested", by["bob"])
+	// bob approved and was re-requested: shows his verdict + the re-request flag.
+	if by["bob"].Status != "approved" || !by["bob"].ReRequested {
+		t.Errorf("bob = %+v, want approved + re_requested", by["bob"])
 	}
 	if by["carol"].Status != "pending" || by["carol"].ReRequested {
 		t.Errorf("carol = %+v, want pending, not re_requested", by["carol"])
@@ -146,6 +147,46 @@ func TestBuildReviewers(t *testing.T) {
 	}
 	if _, ok := by["alice"]; ok {
 		t.Errorf("PR author alice must be excluded")
+	}
+}
+
+// A reviewer who only left a comment (issue comment or a COMMENTED review)
+// reads as "commented", not "pending" — the #629 case where a commenter looked
+// stale as if they'd never opened the PR.
+func TestBuildReviewersTreatsCommentsAsCommented(t *testing.T) {
+	base := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	fp := github.FetchedPR{
+		Author:             "alice",
+		RequestedReviewers: []string{"vic"}, // requested, but only commented
+		Reviews: []github.FetchedReview{
+			{Author: "ed", State: "COMMENTED", SubmittedAt: base}, // COMMENTED review, not requested
+		},
+		Comments: []github.FetchedComment{
+			{Author: "vic"},        // issue comment from the requested reviewer
+			{Author: "frank"},      // drive-by commenter, never requested
+			{Author: "review-bot"}, // bot — must be filtered out
+			{Author: "alice"},      // author — excluded
+		},
+	}
+	got := buildReviewers(fp, map[string]bool{"review-bot": true})
+	by := map[string]store.QueueReviewer{}
+	for _, r := range got {
+		by[r.Login] = r
+	}
+	if by["vic"].Status != "commented" || by["vic"].ReRequested {
+		t.Errorf("vic = %+v, want commented (not pending), not re_requested", by["vic"])
+	}
+	if by["ed"].Status != "commented" {
+		t.Errorf("ed = %+v, want commented", by["ed"])
+	}
+	if by["frank"].Status != "commented" {
+		t.Errorf("frank = %+v, want commented", by["frank"])
+	}
+	if _, ok := by["review-bot"]; ok {
+		t.Errorf("excluded bot must not appear: %+v", got)
+	}
+	if _, ok := by["alice"]; ok {
+		t.Errorf("PR author must be excluded")
 	}
 }
 

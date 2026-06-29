@@ -52,7 +52,8 @@ type FetchedPR struct {
 	UpdatedAt          time.Time
 	RequestedReviewers []string
 	Reviews            []FetchedReview
-	CommitDates        []time.Time // committedDate of recent commits, for "new commits since review"
+	Comments           []FetchedComment // issue comments, for "commented but not reviewed" status
+	CommitDates        []time.Time      // committedDate of recent commits, for "new commits since review"
 	Additions          int
 	Deletions          int
 	ChangedFiles       int
@@ -104,6 +105,7 @@ query($owner:String!,$repo:String!,$cursor:String){
         createdAt updatedAt mergedAt
         reviewRequests(first:20){nodes{requestedReviewer{... on User{login}}}}
         reviews(first:50){nodes{id author{login} state submittedAt body comments{totalCount}}}
+        comments(first:50){nodes{author{login}}}
         commits(last:30){nodes{commit{committedDate}}}
       }
       pageInfo{hasNextPage endCursor}
@@ -142,6 +144,11 @@ type prGQL struct {
 							Comments    struct{ TotalCount int } `json:"comments"`
 						} `json:"nodes"`
 					} `json:"reviews"`
+					Comments struct {
+						Nodes []struct {
+							Author *struct{ Login string } `json:"author"`
+						} `json:"nodes"`
+					} `json:"comments"`
 					Commits struct {
 						Nodes []struct {
 							Commit struct {
@@ -192,6 +199,9 @@ func (c *Client) FetchPullRequests(ctx context.Context, owner, repo string) ([]F
 					fr.SubmittedAt = *rv.SubmittedAt
 				}
 				p.Reviews = append(p.Reviews, fr)
+			}
+			for _, c := range n.Comments.Nodes {
+				p.Comments = append(p.Comments, FetchedComment{Author: login(c.Author)})
 			}
 			for _, c := range n.Commits.Nodes {
 				if c.Commit.CommittedDate != nil {

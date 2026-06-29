@@ -118,20 +118,20 @@ type QueueReviewer struct {
 
 // QueueRow is one PR awaiting review.
 type QueueRow struct {
-	Repo              string          `json:"repo"`
-	PRNumber          int             `json:"pr_number"`
-	Title             string          `json:"title"`
-	Author            string          `json:"author"`
-	URL               string          `json:"url"`
-	AgeHours          float64         `json:"age_hours"`
-	LastActivityHours float64         `json:"last_activity_hours"`
-	Additions         int             `json:"additions"`
-	Deletions         int             `json:"deletions"`
-	ChangedFiles      int             `json:"changed_files"`
-	CommitsSinceReview int            `json:"commits_since_review"`
-	Awaiting          bool            `json:"awaiting"`
-	Tier              string          `json:"tier"`
-	Reviewers         []QueueReviewer `json:"reviewers"`
+	Repo               string          `json:"repo"`
+	PRNumber           int             `json:"pr_number"`
+	Title              string          `json:"title"`
+	Author             string          `json:"author"`
+	URL                string          `json:"url"`
+	AgeHours           float64         `json:"age_hours"`
+	LastActivityHours  float64         `json:"last_activity_hours"`
+	Additions          int             `json:"additions"`
+	Deletions          int             `json:"deletions"`
+	ChangedFiles       int             `json:"changed_files"`
+	CommitsSinceReview int             `json:"commits_since_review"`
+	Awaiting           bool            `json:"awaiting"`
+	Tier               string          `json:"tier"`
+	Reviewers          []QueueReviewer `json:"reviewers"`
 }
 
 // WindowStart returns the inclusive lower bound for a leaderboard window.
@@ -281,13 +281,14 @@ ORDER BY ready_at DESC`)
 }
 
 // awaiting reports whether a PR still needs review: no reviewers, or any
-// reviewer is still pending or has only commented.
+// reviewer is still pending, has only commented (a light changes-requested), or
+// was re-requested after a prior review (the author wants another look).
 func awaiting(reviewers []QueueReviewer) bool {
 	if len(reviewers) == 0 {
 		return true
 	}
 	for _, rv := range reviewers {
-		if rv.Status == "pending" || rv.Status == "commented" {
+		if rv.Status == "pending" || rv.Status == "commented" || rv.ReRequested {
 			return true
 		}
 	}
