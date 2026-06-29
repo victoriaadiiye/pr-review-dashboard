@@ -387,13 +387,13 @@ func TestRankQueueUrgentBeatsNewWhenThresholdLow(t *testing.T) {
 func TestAssignQueueRelations(t *testing.T) {
 	rows := []QueueRow{
 		{PRNumber: 1, Author: "vic"}, // my own PR
-		{PRNumber: 2, Reviewers: []QueueReviewer{{Login: "vic", Status: "pending"}}},                     // requested of me
-		{PRNumber: 3, Reviewers: []QueueReviewer{{Login: "vic", Status: "approved"}}},                    // I approved
-		{PRNumber: 4, Reviewers: []QueueReviewer{{Login: "vic", Status: "approved", ReRequested: true}}}, // re-requested
-		{PRNumber: 5, Reviewers: []QueueReviewer{{Login: "bob", Status: "pending"}}},                     // not mine at all
-		{PRNumber: 6, RequestedTeams: []string{"storage"}},                                               // my team requested
-		{PRNumber: 7, RequestedTeams: []string{"other-team"}},                                            // a team I'm not on
-		{PRNumber: 8, Reviewers: []QueueReviewer{{Login: "vic", Status: "commented"}}},                   // I only commented
+		{PRNumber: 2, Tier: "urgent", Reviewers: []QueueReviewer{{Login: "vic", Status: "pending"}}},                     // requested of me
+		{PRNumber: 3, Tier: "urgent", Reviewers: []QueueReviewer{{Login: "vic", Status: "approved"}}},                    // I approved
+		{PRNumber: 4, Tier: "urgent", Reviewers: []QueueReviewer{{Login: "vic", Status: "approved", ReRequested: true}}}, // re-requested
+		{PRNumber: 5, Reviewers: []QueueReviewer{{Login: "bob", Status: "pending"}}},                                     // not mine at all
+		{PRNumber: 6, RequestedTeams: []string{"storage"}},                                                               // my team requested
+		{PRNumber: 7, RequestedTeams: []string{"other-team"}},                                                            // a team I'm not on
+		{PRNumber: 8, Reviewers: []QueueReviewer{{Login: "vic", Status: "commented"}}},                                   // I only commented
 	}
 	AssignQueueRelations(rows, "vic", true, "storage")
 	want := map[int]string{
@@ -406,10 +406,20 @@ func TestAssignQueueRelations(t *testing.T) {
 		7: RelOther,
 		8: RelTodoDone,
 	}
+	tierByPR := map[int]string{}
 	for _, r := range rows {
 		if r.Relation != want[r.PRNumber] {
 			t.Errorf("PR%d relation = %q, want %q", r.PRNumber, r.Relation, want[r.PRNumber])
 		}
+		tierByPR[r.PRNumber] = r.Tier
+	}
+	// Already-reviewed PRs (todo_done) are calmed to "reviewed", not urgent...
+	if tierByPR[3] != "reviewed" || tierByPR[8] != "reviewed" {
+		t.Errorf("todo_done tiers = %q,%q, want reviewed", tierByPR[3], tierByPR[8])
+	}
+	// ...but action items (incl. re-requested) keep their real urgency.
+	if tierByPR[2] != "urgent" || tierByPR[4] != "urgent" {
+		t.Errorf("todo_action tiers = %q,%q, want urgent kept", tierByPR[2], tierByPR[4])
 	}
 
 	// A non-member must not pick up team-requested PRs as todo.

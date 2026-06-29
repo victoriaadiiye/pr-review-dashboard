@@ -356,6 +356,13 @@ const (
 func AssignQueueRelations(rows []QueueRow, me string, meIsMember bool, rosterSlug string) {
 	for i := range rows {
 		rows[i].Relation = relationFor(rows[i], me, meIsMember, rosterSlug)
+		// From your perspective a PR you've already reviewed isn't urgent — its
+		// global tier reflects other reviewers still owing a review. Calm it to
+		// "reviewed" until your review is re-requested (which makes it
+		// todo_action again and restores its real urgency).
+		if rows[i].Relation == RelTodoDone {
+			rows[i].Tier = "reviewed"
+		}
 	}
 }
 
