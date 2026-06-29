@@ -51,6 +51,7 @@ type FetchedPR struct {
 	MergedAt           time.Time
 	UpdatedAt          time.Time
 	RequestedReviewers []string
+	RequestedTeams     []string // team slugs requested for review, for "a team you're on is requested"
 	Reviews            []FetchedReview
 	Comments           []FetchedComment // issue comments, for "commented but not reviewed" status
 	CommitDates        []time.Time      // committedDate of recent commits, for "new commits since review"
@@ -103,7 +104,7 @@ query($owner:String!,$repo:String!,$cursor:String){
         number title url isDraft additions deletions changedFiles
         author{login}
         createdAt updatedAt mergedAt
-        reviewRequests(first:20){nodes{requestedReviewer{... on User{login}}}}
+        reviewRequests(first:20){nodes{requestedReviewer{... on User{login} ... on Team{slug}}}}
         reviews(first:50){nodes{id author{login} state submittedAt body comments{totalCount}}}
         comments(first:50){nodes{author{login}}}
         commits(last:30){nodes{commit{committedDate}}}
@@ -131,7 +132,10 @@ type prGQL struct {
 					MergedAt       *time.Time              `json:"mergedAt"`
 					ReviewRequests struct {
 						Nodes []struct {
-							RequestedReviewer *struct{ Login string } `json:"requestedReviewer"`
+							RequestedReviewer *struct {
+								Login string `json:"login"` // when the request is to a User
+								Slug  string `json:"slug"`  // when the request is to a Team
+							} `json:"requestedReviewer"`
 						} `json:"nodes"`
 					} `json:"reviewRequests"`
 					Reviews struct {
@@ -189,8 +193,14 @@ func (c *Client) FetchPullRequests(ctx context.Context, owner, repo string) ([]F
 				p.MergedAt = *n.MergedAt
 			}
 			for _, rr := range n.ReviewRequests.Nodes {
-				if rr.RequestedReviewer != nil && rr.RequestedReviewer.Login != "" {
+				if rr.RequestedReviewer == nil {
+					continue
+				}
+				if rr.RequestedReviewer.Login != "" {
 					p.RequestedReviewers = append(p.RequestedReviewers, rr.RequestedReviewer.Login)
+				}
+				if rr.RequestedReviewer.Slug != "" {
+					p.RequestedTeams = append(p.RequestedTeams, rr.RequestedReviewer.Slug)
 				}
 			}
 			for _, rv := range n.Reviews.Nodes {

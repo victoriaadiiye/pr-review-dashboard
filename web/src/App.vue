@@ -20,6 +20,18 @@ const reviewers = ref<string[]>([])
 const historyReviewer = ref<string>('')
 const historyWindow = ref<'week' | 'month' | 'all'>('all')
 
+// Account: the login the queue/history are viewed "as". Persisted locally; this
+// is a self-identification picker, not authentication.
+const people = ref<Array<{ login: string; display_name: string; team: string }>>([])
+const me = ref<string>(localStorage.getItem('me') || '')
+function setMe(login: string) {
+  me.value = login
+  if (login) localStorage.setItem('me', login)
+  else localStorage.removeItem('me')
+  loadQueue()
+  historyReviewer.value = login // focus history on the chosen account
+}
+
 // Themes mirror qompass: nexus (navy/teal), graphite (cool dark), paper (light).
 // The initial theme is set pre-paint by the inline script in index.html.
 // Each theme is shown as a two-tone colour swatch (page bg / accent) rather than
@@ -50,12 +62,22 @@ async function loadBoard() {
 }
 async function loadQueue() {
   try {
-    const res = await fetch('/api/queue')
+    const q = me.value ? `?me=${encodeURIComponent(me.value)}` : ''
+    const res = await fetch(`/api/queue${q}`)
     if (!res.ok) throw new Error(`queue: HTTP ${res.status}`)
     queue.value = await res.json()
     error.value = ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load queue'
+  }
+}
+async function loadPeople() {
+  try {
+    const res = await fetch('/api/people')
+    if (!res.ok) throw new Error(`people: HTTP ${res.status}`)
+    people.value = await res.json()
+  } catch {
+    people.value = []
   }
 }
 async function loadHistory() {
@@ -82,6 +104,8 @@ onMounted(() => {
   loadQueue()
   loadHistory()
   loadReviewers()
+  loadPeople()
+  if (me.value) historyReviewer.value = me.value
 })
 watch(activeWindow, loadBoard)
 watch([historyWindow, historyReviewer], loadHistory)
@@ -109,12 +133,22 @@ watch([historyWindow, historyReviewer], loadHistory)
             :class="{ seg__opt: true, 'seg__opt--on': view === 'history' }"
             @click="view = 'history'">History</button>
         </div>
-        <div class="themes" role="radiogroup" aria-label="Theme">
-          <button v-for="t in themes" :key="t.key" role="radio"
-            :aria-checked="theme === t.key" :title="`${t.label} theme`"
-            class="swatch" :class="{ 'swatch--on': theme === t.key }"
-            :style="{ '--sw-bg': t.bg, '--sw-accent': t.accent }"
-            @click="setTheme(t.key)"><span class="sr-only">{{ t.label }}</span></button>
+        <div class="ctl-row">
+          <label class="account">
+            <span class="account__label">Viewing as</span>
+            <select class="account__select" :value="me" @change="setMe(($event.target as HTMLSelectElement).value)"
+              aria-label="Viewing as account">
+              <option value="">Everyone</option>
+              <option v-for="p in people" :key="p.login" :value="p.login">{{ p.display_name }}</option>
+            </select>
+          </label>
+          <div class="themes" role="radiogroup" aria-label="Theme">
+            <button v-for="t in themes" :key="t.key" role="radio"
+              :aria-checked="theme === t.key" :title="`${t.label} theme`"
+              class="swatch" :class="{ 'swatch--on': theme === t.key }"
+              :style="{ '--sw-bg': t.bg, '--sw-accent': t.accent }"
+              @click="setTheme(t.key)"><span class="sr-only">{{ t.label }}</span></button>
+          </div>
         </div>
       </div>
     </header>
@@ -147,11 +181,7 @@ watch([historyWindow, historyReviewer], loadHistory)
     </template>
 
     <section v-else-if="view === 'queue'" class="queue-view">
-      <div class="card__head bare">
-        <h2>Ready for review</h2>
-        <span class="card__meta">{{ queue.length }} open</span>
-      </div>
-      <Queue :rows="queue" />
+      <Queue :rows="queue" :me="me" />
     </section>
 
     <section v-else class="history-view">
@@ -258,6 +288,34 @@ h1 {
   flex-direction: column;
   align-items: flex-end;
   gap: var(--space-xs);
+}
+
+/* One row holding the account picker and the theme swatches. */
+.ctl-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+}
+.account {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+.account__label {
+  font-size: var(--step--2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-subtle);
+}
+.account__select {
+  font: inherit;
+  font-size: var(--step--1);
+  color: var(--fg);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 4px 10px;
+  cursor: pointer;
 }
 
 /* Theme picker — two-tone colour swatches instead of text pills. */

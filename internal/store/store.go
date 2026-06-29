@@ -60,6 +60,7 @@ type PR struct {
 	MergedAt           time.Time
 	UpdatedAt          time.Time
 	RequestedReviewers []string
+	RequestedTeams     []string
 	Additions          int
 	Deletions          int
 	ChangedFiles       int
@@ -94,6 +95,7 @@ CREATE TABLE IF NOT EXISTS prs (
   last_activity TEXT,
   reviewers_json TEXT,
   commits_since_review INTEGER NOT NULL DEFAULT 0,
+  requested_teams TEXT,
   last_synced TEXT,
   PRIMARY KEY (repo, pr_number)
 );
@@ -219,20 +221,21 @@ func (s *Store) UpsertPR(p PR) error {
 INSERT INTO prs
   (repo, pr_number, title, author, url, is_draft, ready_at, merged_at, updated_at,
    requested_reviewers, additions, deletions, changed_files, last_activity, reviewers_json,
-   commits_since_review, last_synced)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   commits_since_review, requested_teams, last_synced)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(repo, pr_number) DO UPDATE SET
   title=excluded.title, author=excluded.author, url=excluded.url,
   is_draft=excluded.is_draft, ready_at=excluded.ready_at, merged_at=excluded.merged_at,
   updated_at=excluded.updated_at, requested_reviewers=excluded.requested_reviewers,
   additions=excluded.additions, deletions=excluded.deletions, changed_files=excluded.changed_files,
   last_activity=excluded.last_activity, reviewers_json=excluded.reviewers_json,
-  commits_since_review=excluded.commits_since_review,
+  commits_since_review=excluded.commits_since_review, requested_teams=excluded.requested_teams,
   last_synced=excluded.last_synced`,
 		p.Repo, p.Number, p.Title, p.Author, p.URL, boolToInt(p.IsDraft),
 		tsOrEmpty(p.ReadyAt), tsOrEmpty(p.MergedAt), tsOrEmpty(p.UpdatedAt),
 		strings.Join(p.RequestedReviewers, ","), p.Additions, p.Deletions, p.ChangedFiles,
-		tsOrEmpty(p.LastActivity), string(revJSON), p.CommitsSinceReview, tsOrEmpty(time.Now()))
+		tsOrEmpty(p.LastActivity), string(revJSON), p.CommitsSinceReview,
+		strings.Join(p.RequestedTeams, ","), tsOrEmpty(time.Now()))
 	return err
 }
 
@@ -255,12 +258,12 @@ ON CONFLICT(repo, pr_number) DO UPDATE SET
 
 // MarkRepoPRsClosedExcept marks every still-"open" stored PR for repo whose
 // number is NOT in openNumbers as no longer open, by stamping merged_at. The
-// queue shows only merged_at='' rows, so this drops PRs that have merged or
+// queue shows only merged_at=” rows, so this drops PRs that have merged or
 // closed since they were snapshotted. The poller calls it each cycle with the
 // authoritative open set fetched from GitHub.
 //
 // It is self-correcting: if a PR is in fact still open, the next poll re-upserts
-// it with merged_at='' (UpsertPR), undoing a stamp from a transient empty fetch.
+// it with merged_at=” (UpsertPR), undoing a stamp from a transient empty fetch.
 // Passing an empty openNumbers marks all of the repo's open rows closed.
 func (s *Store) MarkRepoPRsClosedExcept(repo string, openNumbers []int, now time.Time) error {
 	args := []any{tsOrEmpty(now), repo}
@@ -324,6 +327,7 @@ func migrate(db *sql.DB) error {
 		{"last_activity", "ALTER TABLE prs ADD COLUMN last_activity TEXT"},
 		{"reviewers_json", "ALTER TABLE prs ADD COLUMN reviewers_json TEXT"},
 		{"commits_since_review", "ALTER TABLE prs ADD COLUMN commits_since_review INTEGER NOT NULL DEFAULT 0"},
+		{"requested_teams", "ALTER TABLE prs ADD COLUMN requested_teams TEXT"},
 	} {
 		if !hasColumn(db, "prs", col.name) {
 			if _, err := db.Exec(col.ddl); err != nil {

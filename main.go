@@ -85,7 +85,10 @@ func main() {
 		log.Print("webhook enabled at POST /webhook/github")
 	}
 
-	h := httpserver.New(st, httpserver.Assets(), runDigest, webhookHandler, cfg.StalePRHours)
+	// Roster team slug (from ROSTER_TEAM="org/slug") resolves "a team you're on
+	// is requested" when the queue is personalized.
+	_, rosterSlug, _ := github.SplitRepo(cfg.RosterTeam)
+	h := httpserver.New(st, httpserver.Assets(), runDigest, webhookHandler, cfg.StalePRHours, rosterSlug)
 	addr := ":" + cfg.HealthPort
 	log.Printf("dashboard up at http://localhost:%s", cfg.HealthPort)
 	if err := http.ListenAndServe(addr, h); err != nil {

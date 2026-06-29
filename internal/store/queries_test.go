@@ -383,3 +383,46 @@ func TestRankQueueUrgentBeatsNewWhenThresholdLow(t *testing.T) {
 		t.Errorf("PR2 (5h) tier = %q, want new", tier[2])
 	}
 }
+
+func TestAssignQueueRelations(t *testing.T) {
+	rows := []QueueRow{
+		{PRNumber: 1, Author: "vic"}, // my own PR
+		{PRNumber: 2, Reviewers: []QueueReviewer{{Login: "vic", Status: "pending"}}},                     // requested of me
+		{PRNumber: 3, Reviewers: []QueueReviewer{{Login: "vic", Status: "approved"}}},                    // I approved
+		{PRNumber: 4, Reviewers: []QueueReviewer{{Login: "vic", Status: "approved", ReRequested: true}}}, // re-requested
+		{PRNumber: 5, Reviewers: []QueueReviewer{{Login: "bob", Status: "pending"}}},                     // not mine at all
+		{PRNumber: 6, RequestedTeams: []string{"storage"}},                                               // my team requested
+		{PRNumber: 7, RequestedTeams: []string{"other-team"}},                                            // a team I'm not on
+		{PRNumber: 8, Reviewers: []QueueReviewer{{Login: "vic", Status: "commented"}}},                   // I only commented
+	}
+	AssignQueueRelations(rows, "vic", true, "storage")
+	want := map[int]string{
+		1: RelAuthor,
+		2: RelTodoAction,
+		3: RelTodoDone,
+		4: RelTodoAction,
+		5: RelOther,
+		6: RelTodoAction,
+		7: RelOther,
+		8: RelTodoDone,
+	}
+	for _, r := range rows {
+		if r.Relation != want[r.PRNumber] {
+			t.Errorf("PR%d relation = %q, want %q", r.PRNumber, r.Relation, want[r.PRNumber])
+		}
+	}
+
+	// A non-member must not pick up team-requested PRs as todo.
+	rows2 := []QueueRow{{PRNumber: 6, RequestedTeams: []string{"storage"}}}
+	AssignQueueRelations(rows2, "vic", false, "storage")
+	if rows2[0].Relation != RelOther {
+		t.Errorf("non-member team-requested = %q, want other", rows2[0].Relation)
+	}
+
+	// Empty me clears relations (no personalization).
+	rows3 := []QueueRow{{PRNumber: 1, Author: "vic"}}
+	AssignQueueRelations(rows3, "", false, "storage")
+	if rows3[0].Relation != "" {
+		t.Errorf("empty me relation = %q, want empty", rows3[0].Relation)
+	}
+}

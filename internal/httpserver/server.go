@@ -15,7 +15,9 @@ import (
 // New returns the HTTP handler. assets is the built Vue dashboard filesystem.
 // runDigest triggers an on-demand Slack digest; pass nil to disable the route.
 // webhook handles POST /webhook/github; pass nil to disable the route.
-func New(st *store.Store, assets fs.FS, runDigest func(context.Context) error, webhook http.Handler, staleHours float64) http.Handler {
+// rosterSlug is the roster team's slug, used to resolve "a team you're on is
+// requested" when the queue is personalized via ?me=.
+func New(st *store.Store, assets fs.FS, runDigest func(context.Context) error, webhook http.Handler, staleHours float64, rosterSlug string) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/webhook/github", func(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +58,10 @@ func New(st *store.Store, assets fs.FS, runDigest func(context.Context) error, w
 		rows, err := st.Queue(time.Now())
 		if err == nil {
 			rows = store.RankQueue(rows, staleHours)
+			if me := r.URL.Query().Get("me"); me != "" {
+				team, _ := st.PersonTeam(me)
+				store.AssignQueueRelations(rows, me, team == "member", rosterSlug)
+			}
 		}
 		writeJSON(w, rows, err)
 	})
@@ -76,6 +82,11 @@ func New(st *store.Store, assets fs.FS, runDigest func(context.Context) error, w
 			sort.Strings(who)
 		}
 		writeJSON(w, who, err)
+	})
+
+	mux.HandleFunc("/api/people", func(w http.ResponseWriter, r *http.Request) {
+		people, err := st.People()
+		writeJSON(w, people, err)
 	})
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {

@@ -129,9 +129,14 @@ type QueueRow struct {
 	Deletions          int             `json:"deletions"`
 	ChangedFiles       int             `json:"changed_files"`
 	CommitsSinceReview int             `json:"commits_since_review"`
+	RequestedTeams     []string        `json:"requested_teams"`
 	Awaiting           bool            `json:"awaiting"`
 	Tier               string          `json:"tier"`
 	Reviewers          []QueueReviewer `json:"reviewers"`
+	// Relation is this PR's relationship to the requesting user ("me" query
+	// param): author | todo_action | todo_done | other. Empty when no user is
+	// selected. Set by AssignQueueRelations, not stored.
+	Relation string `json:"relation"`
 }
 
 // WindowStart returns the inclusive lower bound for a leaderboard window.
@@ -217,6 +222,7 @@ type prSeed struct {
 	changedFiles             int
 	commitsSinceReview       int
 	reviewersJSON            string
+	requestedTeams           string
 }
 
 // Queue returns open, non-draft, unmerged PRs enriched with size, activity, and
@@ -224,7 +230,7 @@ type prSeed struct {
 func (s *Store) Queue(now time.Time) ([]QueueRow, error) {
 	rows, err := s.db.Query(`
 SELECT repo, pr_number, title, author, url, ready_at, last_activity,
-       additions, deletions, changed_files, commits_since_review, reviewers_json
+       additions, deletions, changed_files, commits_since_review, reviewers_json, requested_teams
 FROM prs
 WHERE is_draft = 0 AND merged_at = ''
 ORDER BY ready_at DESC`)
@@ -234,14 +240,15 @@ ORDER BY ready_at DESC`)
 	var seeds []prSeed
 	for rows.Next() {
 		var p prSeed
-		var lastActivity, reviewersJSON sql.NullString
+		var lastActivity, reviewersJSON, requestedTeams sql.NullString
 		if err := rows.Scan(&p.repo, &p.prNumber, &p.title, &p.author, &p.url, &p.readyAt,
-			&lastActivity, &p.additions, &p.deletions, &p.changedFiles, &p.commitsSinceReview, &reviewersJSON); err != nil {
+			&lastActivity, &p.additions, &p.deletions, &p.changedFiles, &p.commitsSinceReview, &reviewersJSON, &requestedTeams); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		p.lastActivity = lastActivity.String
 		p.reviewersJSON = reviewersJSON.String
+		p.requestedTeams = requestedTeams.String
 		seeds = append(seeds, p)
 	}
 	if err := rows.Close(); err != nil {
@@ -257,6 +264,9 @@ ORDER BY ready_at DESC`)
 			Repo: p.repo, PRNumber: p.prNumber, Title: p.title, Author: p.author, URL: p.url,
 			Additions: p.additions, Deletions: p.deletions, ChangedFiles: p.changedFiles,
 			CommitsSinceReview: p.commitsSinceReview,
+		}
+		if p.requestedTeams != "" {
+			q.RequestedTeams = strings.Split(p.requestedTeams, ",")
 		}
 		if t, err := time.Parse(time.RFC3339, p.readyAt); err == nil {
 			q.AgeHours = now.Sub(t).Hours()
@@ -328,6 +338,72 @@ func RankQueue(rows []QueueRow, staleHours float64) []QueueRow {
 	return out
 }
 
+// Queue relation values, set on QueueRow.Relation by AssignQueueRelations.
+const (
+	RelAuthor     = "author"      // me created this PR — never in my todo
+	RelTodoAction = "todo_action" // requested of me / my team / re-requested, not yet done
+	RelTodoDone   = "todo_done"   // I reviewed it; sinks to the bottom of my todo
+	RelOther      = "other"       // everything else
+)
+
+// AssignQueueRelations tags each row's Relation relative to the user me (a
+// GitHub login). meIsMember reports whether me belongs to the roster team and
+// rosterSlug is that team's slug, together resolving "a team you're on is
+// requested". When me is empty every Relation is cleared (no personalization).
+//
+// The split the UI draws: Todo = {todo_action, todo_done}; All open =
+// {author, other}.
+func AssignQueueRelations(rows []QueueRow, me string, meIsMember bool, rosterSlug string) {
+	for i := range rows {
+		rows[i].Relation = relationFor(rows[i], me, meIsMember, rosterSlug)
+	}
+}
+
+func relationFor(row QueueRow, me string, meIsMember bool, rosterSlug string) string {
+	if me == "" {
+		return ""
+	}
+	if strings.EqualFold(row.Author, me) {
+		return RelAuthor
+	}
+	var (
+		mine         QueueReviewer
+		hasEntry     bool
+		reviewedByMe bool
+	)
+	for _, rv := range row.Reviewers {
+		if strings.EqualFold(rv.Login, me) {
+			mine, hasEntry = rv, true
+			switch rv.Status {
+			case "approved", "changes", "commented":
+				reviewedByMe = true
+			}
+			break
+		}
+	}
+	teamRequested := meIsMember && rosterSlug != "" && containsFold(row.RequestedTeams, rosterSlug)
+
+	actionNeeded := (hasEntry && (mine.Status == "pending" || mine.ReRequested)) ||
+		(teamRequested && !reviewedByMe)
+	switch {
+	case actionNeeded:
+		return RelTodoAction
+	case reviewedByMe:
+		return RelTodoDone
+	default:
+		return RelOther
+	}
+}
+
+func containsFold(haystack []string, needle string) bool {
+	for _, h := range haystack {
+		if strings.EqualFold(h, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 // DistinctReviewers returns every login that has submitted a review event.
 func (s *Store) DistinctReviewers() ([]string, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT reviewer FROM review_events`)
@@ -347,4 +423,46 @@ func (s *Store) DistinctReviewers() ([]string, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// PersonInfo is a selectable account for the dashboard's "who am I" picker.
+type PersonInfo struct {
+	Login       string `json:"login"`
+	DisplayName string `json:"display_name"`
+	Team        string `json:"team"`
+}
+
+// People returns active people for the account picker — roster members first,
+// then guests — excluding bots/service accounts. Each is a selectable account.
+func (s *Store) People() ([]PersonInfo, error) {
+	rows, err := s.db.Query(`
+SELECT login, COALESCE(NULLIF(display_name, ''), login), team
+FROM people WHERE active = 1
+ORDER BY (team = 'member') DESC, login`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PersonInfo
+	for rows.Next() {
+		var p PersonInfo
+		if err := rows.Scan(&p.Login, &p.DisplayName, &p.Team); err != nil {
+			return nil, err
+		}
+		if s.isExcluded(p.Login) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// PersonTeam returns a login's team ("member"/"guest") and whether it is known.
+func (s *Store) PersonTeam(login string) (string, bool) {
+	var team string
+	err := s.db.QueryRow(`SELECT team FROM people WHERE login = ?`, login).Scan(&team)
+	if err != nil {
+		return "", false
+	}
+	return team, true
 }

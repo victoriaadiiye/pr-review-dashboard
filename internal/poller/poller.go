@@ -62,6 +62,7 @@ func (p *Poller) SyncRepo(ctx context.Context, repo string) error {
 			Repo: repo, Number: fp.Number, Title: fp.Title, Author: fp.Author, URL: fp.URL,
 			IsDraft: fp.IsDraft, ReadyAt: fp.ReadyAt, MergedAt: fp.MergedAt, UpdatedAt: fp.UpdatedAt,
 			RequestedReviewers: fp.RequestedReviewers,
+			RequestedTeams:     fp.RequestedTeams,
 			Additions:          fp.Additions,
 			Deletions:          fp.Deletions,
 			ChangedFiles:       fp.ChangedFiles,
