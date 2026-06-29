@@ -93,10 +93,12 @@ th.num {
 .rank {
   color: var(--fg-muted);
   text-align: center;
+  width: 3rem;
 }
 .medal {
   font-family: var(--font-sans);
-  font-size: var(--step-0);
+  font-size: var(--step-1);
+  line-height: 1;
 }
 
 .who {
@@ -116,7 +118,11 @@ th.num {
   color: var(--fg-subtle);
 }
 
-/* Top three get the accent on points */
+/* Top three get stronger names; the leader's points use the gold accent. */
+tbody tr:nth-child(-n + 3) .name {
+  color: var(--fg-strong);
+  font-weight: 600;
+}
 tbody tr:nth-child(1) .points {
   color: var(--gold);
 }

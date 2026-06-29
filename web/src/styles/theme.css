@@ -8,6 +8,25 @@
  * in sync manually if the upstream palette changes.
  */
 
+/* ── Bundled fonts (self-hosted; the binary ships offline) ─────────────────
+ * Inter is the design-system sans; JetBrains Mono is used for numerals, PR
+ * refs, and chips. Both are bundled as woff2 so there are no external requests.
+ */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../assets/fonts/InterVariable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('../assets/fonts/JetBrainsMono.woff2') format('woff2');
+}
+
 :root {
   /* ── Qumulo palette (subset used here) ─────────────────── */
   --q-agave-500: hsl(192 100% 40%);
@@ -193,9 +212,13 @@ body {
   font-family: var(--font-sans);
   background: var(--bg-page);
   color: var(--fg);
-  line-height: 1.5;
+  line-height: 1.55;
   font-size: var(--step--1);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* Inter: enable contextual alternates + tabular figures so numbers align. */
+  font-feature-settings: 'cv05' 1, 'ss03' 1, 'cv11' 1;
 }
 
 :focus-visible {

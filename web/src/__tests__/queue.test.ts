@@ -5,7 +5,7 @@ import QueuePanel from '../components/QueuePanel.vue'
 const base = {
   repo: 'acme/widgets', pr_number: 7, title: 'Add fleet sync', author: 'alice',
   url: 'https://gh/7', age_hours: 100, last_activity_hours: 2,
-  additions: 210, deletions: 18, changed_files: 4, awaiting: true,
+  additions: 210, deletions: 18, changed_files: 4, commits_since_review: 0, awaiting: true,
   tier: 'urgent', reviewers: [{ login: 'bob', status: 'pending', re_requested: true }],
 }
 
@@ -22,8 +22,16 @@ describe('QueuePanel', () => {
     expect(w.text()).toContain('+210')
     expect(w.text()).toContain('−18')
   })
-  it('shows a NEW chip only for the new tier', () => {
-    expect(mount(QueuePanel, { props: { pr: { ...base, tier: 'new' } } }).text()).toContain('NEW')
-    expect(mount(QueuePanel, { props: { pr: base } }).text()).not.toContain('NEW')
+  it('labels each PR with its tier badge', () => {
+    expect(mount(QueuePanel, { props: { pr: { ...base, tier: 'new' } } }).text()).toContain('New')
+    expect(mount(QueuePanel, { props: { pr: base } }).text()).toContain('Urgent')
+    expect(mount(QueuePanel, { props: { pr: { ...base, tier: 'reviewed' } } }).text()).toContain('Reviewed')
+  })
+  it('notes new commits since last review only when there are any', () => {
+    const withCommits = mount(QueuePanel, { props: { pr: { ...base, commits_since_review: 3 } } })
+    expect(withCommits.text()).toMatch(/3 new commits since last review/i)
+    const single = mount(QueuePanel, { props: { pr: { ...base, commits_since_review: 1 } } })
+    expect(single.text()).toMatch(/1 new commit since last review/i)
+    expect(mount(QueuePanel, { props: { pr: base } }).text()).not.toMatch(/since last review/i)
   })
 })

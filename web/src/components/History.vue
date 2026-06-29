@@ -45,7 +45,7 @@ const rel = (iso: string) => {
         <td class="who"><span class="name">{{ r.display_name }}</span></td>
         <td class="pr">
           <a :href="r.url" target="_blank" rel="noopener">{{ r.title || `${r.repo}#${r.pr_number}` }}</a>
-          <span class="ref">{{ r.repo }}#{{ r.pr_number }}</span>
+          <span v-if="r.title" class="ref">{{ r.repo }}#{{ r.pr_number }}</span>
         </td>
         <td>
           <span v-for="s in r.states" :key="s" class="chip" :class="`chip--${stateChip(s)}`">{{ stateChip(s) }}</span>

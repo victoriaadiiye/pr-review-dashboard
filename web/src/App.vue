@@ -22,10 +22,12 @@ const historyWindow = ref<'week' | 'month' | 'all'>('all')
 
 // Themes mirror qompass: nexus (navy/teal), graphite (cool dark), paper (light).
 // The initial theme is set pre-paint by the inline script in index.html.
+// Each theme is shown as a two-tone colour swatch (page bg / accent) rather than
+// a text pill — compact and unmistakable in the masthead.
 const themes = [
-  { key: 'nexus', label: 'Nexus' },
-  { key: 'dark', label: 'Graphite' },
-  { key: 'light', label: 'Paper' },
+  { key: 'nexus', label: 'Nexus', bg: 'hsl(213 23% 16%)', accent: 'hsl(192 85% 56%)' },
+  { key: 'dark', label: 'Graphite', bg: '#141820', accent: '#6ab8ff' },
+  { key: 'light', label: 'Paper', bg: '#ffffff', accent: '#8a3a1a' },
 ] as const
 const theme = ref<string>(document.documentElement.dataset.theme || 'nexus')
 function setTheme(t: string) {
@@ -107,11 +109,12 @@ watch([historyWindow, historyReviewer], loadHistory)
             :class="{ seg__opt: true, 'seg__opt--on': view === 'history' }"
             @click="view = 'history'">History</button>
         </div>
-        <div class="seg seg--sm" role="radiogroup" aria-label="Theme">
+        <div class="themes" role="radiogroup" aria-label="Theme">
           <button v-for="t in themes" :key="t.key" role="radio"
             :aria-checked="theme === t.key" :title="`${t.label} theme`"
-            :class="{ seg__opt: true, 'seg__opt--on': theme === t.key }"
-            @click="setTheme(t.key)">{{ t.label }}</button>
+            class="swatch" :class="{ 'swatch--on': theme === t.key }"
+            :style="{ '--sw-bg': t.bg, '--sw-accent': t.accent }"
+            @click="setTheme(t.key)"><span class="sr-only">{{ t.label }}</span></button>
         </div>
       </div>
     </header>
@@ -254,16 +257,47 @@ h1 {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: var(--space-2xs);
+  gap: var(--space-xs);
 }
 
-/* Smaller segmented control for the theme picker. */
-.seg--sm {
-  padding: 2px;
+/* Theme picker — two-tone colour swatches instead of text pills. */
+.themes {
+  display: inline-flex;
+  gap: var(--space-2xs);
+  align-items: center;
+  align-self: flex-end;
+  padding-right: 3px;
 }
-.seg--sm .seg__opt {
-  padding: 3px 10px;
-  font-size: var(--step--2);
+.swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: linear-gradient(135deg, var(--sw-bg) 0 50%, var(--sw-accent) 50% 100%);
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-fast) var(--motion-ease);
+}
+.swatch:hover {
+  transform: scale(1.12);
+}
+.swatch--on {
+  box-shadow:
+    0 0 0 2px var(--bg-page),
+    0 0 0 4px var(--accent);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .leaderboard-controls {

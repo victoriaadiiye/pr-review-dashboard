@@ -22,6 +22,20 @@ describe('History', () => {
     expect(link.attributes('href')).toBe('http://gh/pr/42')
   })
 
+  it('does not render the repo#num ref twice when the title is missing', () => {
+    const rows = [
+      {
+        reviewer: 'alice', display_name: 'Alice', repo: 'acme/widgets', pr_number: 567,
+        title: '', url: 'http://gh/pr/567', author: 'bob',
+        points: 5, reviews: 1, states: ['APPROVED'],
+        last_submitted: '2026-06-15T10:00:00Z',
+      },
+    ]
+    const wrapper = mount(History, { props: { rows } })
+    const occurrences = wrapper.text().split('acme/widgets#567').length - 1
+    expect(occurrences).toBe(1)
+  })
+
   it('shows an empty state when there are no rows', () => {
     const wrapper = mount(History, { props: { rows: [] } })
     expect(wrapper.text()).toContain('No reviews in this window')
