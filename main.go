@@ -6,6 +6,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"pr-review-dashboard/internal/config"
@@ -46,21 +47,32 @@ func main() {
 	p := poller.New(gh, st)
 	p.SetExcludedLogins(cfg.ExcludedLogins)
 
+	// syncAll pulls roster + every repo from GitHub. Shared by the background
+	// loop and the on-demand /api/sync route; a mutex serializes the two so a
+	// manual refresh never overlaps a scheduled poll.
+	var syncMu sync.Mutex
+	syncAll := func(ctx context.Context) error {
+		syncMu.Lock()
+		defer syncMu.Unlock()
+		if err := p.SyncRoster(ctx, cfg.RosterTeam); err != nil {
+			log.Printf("roster sync: %v", err)
+		}
+		for _, repo := range cfg.Repos {
+			if err := p.SyncRepo(ctx, repo); err != nil {
+				log.Printf("repo sync %s: %v", repo, err)
+			}
+			if err := scanner.ScanRepo(ctx, repo, time.Now()); err != nil {
+				log.Printf("merge scan %s: %v", repo, err)
+			}
+		}
+		return nil
+	}
+
 	// Background sync loop.
 	go func() {
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			if err := p.SyncRoster(ctx, cfg.RosterTeam); err != nil {
-				log.Printf("roster sync: %v", err)
-			}
-			for _, repo := range cfg.Repos {
-				if err := p.SyncRepo(ctx, repo); err != nil {
-					log.Printf("repo sync %s: %v", repo, err)
-				}
-				if err := scanner.ScanRepo(ctx, repo, time.Now()); err != nil {
-					log.Printf("merge scan %s: %v", repo, err)
-				}
-			}
+			_ = syncAll(ctx)
 			cancel()
 			time.Sleep(cfg.PollInterval)
 		}
@@ -88,7 +100,7 @@ func main() {
 	// Roster team slug (from ROSTER_TEAM="org/slug") resolves "a team you're on
 	// is requested" when the queue is personalized.
 	_, rosterSlug, _ := github.SplitRepo(cfg.RosterTeam)
-	h := httpserver.New(st, httpserver.Assets(), runDigest, webhookHandler, cfg.StalePRHours, rosterSlug)
+	h := httpserver.New(st, httpserver.Assets(), runDigest, webhookHandler, cfg.StalePRHours, rosterSlug, syncAll)
 	addr := ":" + cfg.HealthPort
 	log.Printf("dashboard up at http://localhost:%s", cfg.HealthPort)
 	if err := http.ListenAndServe(addr, h); err != nil {

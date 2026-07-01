@@ -341,7 +341,7 @@ func RankQueue(rows []QueueRow, staleHours float64) []QueueRow {
 // Queue relation values, set on QueueRow.Relation by AssignQueueRelations.
 const (
 	RelAuthor     = "author"      // me created this PR — never in my todo
-	RelTodoAction = "todo_action" // requested of me / my team / re-requested, not yet done
+	RelTodoAction = "todo_action" // requested of me / my team / re-requested / no reviewer assigned, not yet done
 	RelTodoDone   = "todo_done"   // I reviewed it; sinks to the bottom of my todo
 	RelOther      = "other"       // everything else
 )
@@ -390,8 +390,15 @@ func relationFor(row QueueRow, me string, meIsMember bool, rosterSlug string) st
 	}
 	teamRequested := meIsMember && rosterSlug != "" && containsFold(row.RequestedTeams, rosterSlug)
 
+	// A PR with no individual reviewer assigned (the "no reviewers requested"
+	// state the UI shows) is everyone's problem: surface it in every non-author's
+	// todo so it can't sit unnoticed. Team-only routing still counts here — it
+	// matches the badge and keeps such PRs visible to everyone, not just the team.
+	noReviewersRequested := len(row.Reviewers) == 0
+
 	actionNeeded := (hasEntry && (mine.Status == "pending" || mine.ReRequested)) ||
-		(teamRequested && !reviewedByMe)
+		(teamRequested && !reviewedByMe) ||
+		noReviewersRequested
 	switch {
 	case actionNeeded:
 		return RelTodoAction

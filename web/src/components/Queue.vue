@@ -4,21 +4,18 @@ import QueuePanel from './QueuePanel.vue'
 
 const props = defineProps<{ rows: any[]; me: string }>()
 
-const isTodo = (r: any) => r.relation === 'todo_action' || r.relation === 'todo_done'
+// Todo: only PRs still waiting on my action. Once I've reviewed one
+// (todo_done) it drops out of my todo and lives in All open below.
+const isTodo = (r: any) => r.relation === 'todo_action'
+const isMine = (r: any) => r.relation === 'author'
 
-// Todo: action items first, already-reviewed ones sink to the bottom (stable
-// within each group, preserving the server's urgency order).
-const todo = computed(() =>
-  props.rows
-    .filter(isTodo)
-    .slice()
-    .sort((a, b) => (a.relation === 'todo_action' ? 0 : 1) - (b.relation === 'todo_action' ? 0 : 1)),
-)
-const allOpen = computed(() => props.rows.filter((r) => !isTodo(r)))
+const todo = computed(() => props.rows.filter(isTodo))
+const myOpen = computed(() => props.rows.filter(isMine))
+const allOpen = computed(() => props.rows.filter((r) => !isTodo(r) && !isMine(r)))
 </script>
 
 <template>
-  <!-- Personalized: split into Todo and All open. -->
+  <!-- Personalized: split into Todo, My open PRs, and All open. -->
   <div v-if="me" class="sections">
     <section>
       <div class="sec-head">
@@ -28,6 +25,17 @@ const allOpen = computed(() => props.rows.filter((r) => !isTodo(r)))
       <div class="grid">
         <QueuePanel v-for="p in todo" :key="p.repo + p.pr_number" :pr="p" />
         <p v-if="todo.length === 0" class="empty">✅ Nothing waiting on you right now.</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <h2>My open PRs</h2>
+        <span class="count">{{ myOpen.length }}</span>
+      </div>
+      <div class="grid">
+        <QueuePanel v-for="p in myOpen" :key="p.repo + p.pr_number" :pr="p" />
+        <p v-if="myOpen.length === 0" class="empty">No open PRs authored by you.</p>
       </div>
     </section>
 
@@ -85,15 +93,14 @@ const allOpen = computed(() => props.rows.filter((r) => !isTodo(r)))
   border-radius: var(--radius-pill);
   padding: 1px 8px;
 }
+/* Fluid columns: cards keep a comfortable min width and the track count flows
+   with available space instead of snapping at one hard breakpoint. align-items
+   keeps each card its natural height (no stretch-whitespace in shorter cards). */
 .grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 21rem), 1fr));
   gap: var(--space-s);
-}
-@media (min-width: 48rem) {
-  .grid {
-    grid-template-columns: 1fr 1fr;
-  }
+  align-items: start;
 }
 .empty {
   grid-column: 1 / -1;

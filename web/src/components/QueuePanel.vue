@@ -64,7 +64,7 @@ const tierLabel = (t: string) => TIER_LABEL[t] ?? t
   border-left-style: solid;
   border-left-color: var(--tier, var(--border));
   border-radius: var(--radius-lg);
-  padding: var(--space-s) var(--space-m);
+  padding: var(--space-s);
   transition:
     transform var(--motion-fast) var(--motion-ease),
     box-shadow var(--motion-fast) var(--motion-ease),
@@ -132,7 +132,7 @@ const tierLabel = (t: string) => TIER_LABEL[t] ?? t
 
 /* New-commits-since-review notice — warns the reviewer their last look is stale. */
 .commits {
-  margin-top: var(--space-xs);
+  margin-top: var(--space-2xs);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -149,17 +149,21 @@ const tierLabel = (t: string) => TIER_LABEL[t] ?? t
 .panel__meta {
   display: flex;
   align-items: center;
-  gap: var(--space-3xs) var(--space-2xs);
+  gap: var(--space-3xs) 0;
   flex-wrap: wrap;
-  margin-top: var(--space-xs);
+  margin-top: var(--space-2xs);
   font-family: var(--font-mono);
   font-size: var(--step--2);
   color: var(--fg-subtle);
 }
-/* Middot separators between meta items for a tidy single rhythm. */
-.panel__meta > span:not(:last-child)::after {
+/* Each item stays whole; leading middot separators so a wrap never strands a
+   dangling '·' at the end of a line (it moves to the start of the next one). */
+.panel__meta > span {
+  white-space: nowrap;
+}
+.panel__meta > span:not(:first-child)::before {
   content: '·';
-  margin-left: var(--space-2xs);
+  margin: 0 var(--space-2xs);
   color: var(--border-strong);
 }
 .by::before {
@@ -176,7 +180,7 @@ const tierLabel = (t: string) => TIER_LABEL[t] ?? t
   display: flex;
   gap: var(--space-3xs);
   flex-wrap: wrap;
-  margin-top: var(--space-xs);
+  margin-top: var(--space-2xs);
 }
 .chip {
   display: inline-flex;

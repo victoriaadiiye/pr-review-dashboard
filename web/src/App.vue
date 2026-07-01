@@ -14,7 +14,14 @@ const activeWindow = ref<'week' | 'month' | 'all'>('week')
 const board = ref<any[]>([])
 const queue = ref<any[]>([])
 const error = ref<string>('')
-const view = ref<'leaderboard' | 'queue' | 'history'>('leaderboard')
+const view = ref<'dashboard' | 'queue' | 'history'>('queue')
+
+// External links surfaced in the masthead. Points at the primary tracked repo;
+// change these if REPOS changes.
+const links = {
+  github: 'https://github.com/Qumulo/qompass/pulls',
+  graphite: 'https://app.graphite.dev/github/pr/Qumulo/qompass',
+}
 const history = ref<any[]>([])
 const reviewers = ref<string[]>([])
 const historyReviewer = ref<string>('')
@@ -49,6 +56,23 @@ function setTheme(t: string) {
 }
 
 const windowLabel = computed(() => windows.find((w) => w.key === activeWindow.value)?.label ?? '')
+
+// Force an immediate GitHub sync, then reload every view from the fresh data.
+const refreshing = ref(false)
+async function refresh() {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    const res = await fetch('/api/sync', { method: 'POST' })
+    if (!res.ok) throw new Error(`sync: HTTP ${res.status}`)
+    await Promise.all([loadBoard(), loadQueue(), loadHistory(), loadReviewers()])
+    error.value = ''
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to refresh'
+  } finally {
+    refreshing.value = false
+  }
+}
 
 async function loadBoard() {
   try {
@@ -114,26 +138,20 @@ watch([historyWindow, historyReviewer], loadHistory)
 <template>
   <main class="page">
     <header class="masthead">
-      <div class="title">
-        <span class="mark">🏆</span>
-        <div>
-          <h1>PR Review Leaderboard</h1>
-          <p class="tagline">Review work, scored on merge — quality over volume.</p>
+      <div class="masthead-top">
+        <div class="title">
+          <span class="mark">🏆</span>
+          <div>
+            <h1>PR Review Dashboard</h1>
+            <p class="tagline">Review work, scored on merge — quality over volume.</p>
+          </div>
         </div>
-      </div>
-      <div class="masthead-controls">
-        <div class="seg" role="tablist" aria-label="View">
-          <button role="tab" :aria-selected="view === 'leaderboard'"
-            :class="{ seg__opt: true, 'seg__opt--on': view === 'leaderboard' }"
-            @click="view = 'leaderboard'">Leaderboard</button>
-          <button role="tab" :aria-selected="view === 'queue'"
-            :class="{ seg__opt: true, 'seg__opt--on': view === 'queue' }"
-            @click="view = 'queue'">Review queue</button>
-          <button role="tab" :aria-selected="view === 'history'"
-            :class="{ seg__opt: true, 'seg__opt--on': view === 'history' }"
-            @click="view = 'history'">History</button>
-        </div>
-        <div class="ctl-row">
+        <div class="utils">
+          <button class="refresh" :disabled="refreshing" @click="refresh"
+            :aria-busy="refreshing" title="Force a GitHub sync now">
+            <span class="refresh__icon" :class="{ 'refresh__icon--spin': refreshing }">↻</span>
+            {{ refreshing ? 'Refreshing…' : 'Refresh' }}
+          </button>
           <label class="account">
             <span class="account__label">Viewing as</span>
             <select class="account__select" :value="me" @change="setMe(($event.target as HTMLSelectElement).value)"
@@ -142,6 +160,12 @@ watch([historyWindow, historyReviewer], loadHistory)
               <option v-for="p in people" :key="p.login" :value="p.login">{{ p.display_name }}</option>
             </select>
           </label>
+          <a class="ext" :href="links.github" target="_blank" rel="noopener" title="Open pull requests on GitHub">
+            GitHub<span class="ext__arrow">↗</span>
+          </a>
+          <a class="ext" :href="links.graphite" target="_blank" rel="noopener" title="Open pull requests in Graphite">
+            Graphite<span class="ext__arrow">↗</span>
+          </a>
           <div class="themes" role="radiogroup" aria-label="Theme">
             <button v-for="t in themes" :key="t.key" role="radio"
               :aria-checked="theme === t.key" :title="`${t.label} theme`"
@@ -151,11 +175,24 @@ watch([historyWindow, historyReviewer], loadHistory)
           </div>
         </div>
       </div>
+      <nav class="viewnav">
+        <div class="seg" role="tablist" aria-label="View">
+          <button role="tab" :aria-selected="view === 'dashboard'"
+            :class="{ seg__opt: true, 'seg__opt--on': view === 'dashboard' }"
+            @click="view = 'dashboard'">Dashboard</button>
+          <button role="tab" :aria-selected="view === 'queue'"
+            :class="{ seg__opt: true, 'seg__opt--on': view === 'queue' }"
+            @click="view = 'queue'">Review queue</button>
+          <button role="tab" :aria-selected="view === 'history'"
+            :class="{ seg__opt: true, 'seg__opt--on': view === 'history' }"
+            @click="view = 'history'">History</button>
+        </div>
+      </nav>
     </header>
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
 
-    <template v-if="view === 'leaderboard'">
+    <template v-if="view === 'dashboard'">
       <div class="leaderboard-controls">
         <div class="seg" role="tablist" aria-label="Leaderboard window">
           <button
@@ -222,10 +259,23 @@ watch([historyWindow, historyReviewer], loadHistory)
 
 .masthead {
   display: flex;
+  flex-direction: column;
+  gap: var(--space-m);
+}
+/* Top bar: brand on the left, utility controls on the right. */
+.masthead-top {
+  display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-m);
   flex-wrap: wrap;
+}
+/* View tabs sit on their own row, separated from the utilities above by a
+   hairline so the primary navigation reads as its own band. */
+.viewnav {
+  display: flex;
+  padding-top: var(--space-s);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .title {
@@ -283,14 +333,40 @@ h1 {
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-.masthead-controls {
+/* Utility controls: refresh, account picker, external links, theme swatches. */
+.utils {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: var(--space-xs);
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-s);
 }
 
-/* One row holding the account picker and the theme swatches. */
+/* External link pills (GitHub, Graphite) — match the refresh/account controls. */
+.ext {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--step--1);
+  color: var(--fg);
+  text-decoration: none;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 4px 12px;
+}
+.ext:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.ext__arrow {
+  font-size: var(--step--2);
+  color: var(--fg-subtle);
+}
+.ext:hover .ext__arrow {
+  color: var(--accent);
+}
+
+/* Legacy one-row control container (kept for any residual use). */
 .ctl-row {
   display: flex;
   align-items: center;
@@ -316,6 +392,41 @@ h1 {
   border-radius: var(--radius-pill);
   padding: 4px 10px;
   cursor: pointer;
+}
+
+/* Refresh — forces an immediate GitHub sync, then reloads every view. */
+.refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font: inherit;
+  font-size: var(--step--1);
+  color: var(--fg);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.refresh:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.refresh:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.refresh__icon {
+  display: inline-block;
+  line-height: 1;
+}
+.refresh__icon--spin {
+  animation: refresh-spin 0.8s linear infinite;
+}
+@keyframes refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Theme picker — two-tone colour swatches instead of text pills. */

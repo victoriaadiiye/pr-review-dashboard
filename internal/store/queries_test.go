@@ -392,8 +392,9 @@ func TestAssignQueueRelations(t *testing.T) {
 		{PRNumber: 4, Tier: "urgent", Reviewers: []QueueReviewer{{Login: "vic", Status: "approved", ReRequested: true}}}, // re-requested
 		{PRNumber: 5, Reviewers: []QueueReviewer{{Login: "bob", Status: "pending"}}},                                     // not mine at all
 		{PRNumber: 6, RequestedTeams: []string{"storage"}},                                                               // my team requested
-		{PRNumber: 7, RequestedTeams: []string{"other-team"}},                                                            // a team I'm not on
+		{PRNumber: 7, RequestedTeams: []string{"other-team"}},                                                            // another team, but no individual reviewer -> everyone's todo
 		{PRNumber: 8, Reviewers: []QueueReviewer{{Login: "vic", Status: "commented"}}},                                   // I only commented
+		{PRNumber: 9},                                                                                                    // no reviewer/team assigned — everyone's todo
 	}
 	AssignQueueRelations(rows, "vic", true, "storage")
 	want := map[int]string{
@@ -403,8 +404,9 @@ func TestAssignQueueRelations(t *testing.T) {
 		4: RelTodoAction,
 		5: RelOther,
 		6: RelTodoAction,
-		7: RelOther,
+		7: RelTodoAction, // team-routed but no individual reviewer -> everyone's todo
 		8: RelTodoDone,
+		9: RelTodoAction,
 	}
 	tierByPR := map[int]string{}
 	for _, r := range rows {
@@ -422,8 +424,10 @@ func TestAssignQueueRelations(t *testing.T) {
 		t.Errorf("todo_action tiers = %q,%q, want urgent kept", tierByPR[2], tierByPR[4])
 	}
 
-	// A non-member must not pick up team-requested PRs as todo.
-	rows2 := []QueueRow{{PRNumber: 6, RequestedTeams: []string{"storage"}}}
+	// A non-member must not pick up team-requested PRs as todo. (An individual
+	// reviewer is present so the "no reviewer assigned -> everyone's todo" rule
+	// doesn't apply and we isolate the team-membership path.)
+	rows2 := []QueueRow{{PRNumber: 6, RequestedTeams: []string{"storage"}, Reviewers: []QueueReviewer{{Login: "bob", Status: "pending"}}}}
 	AssignQueueRelations(rows2, "vic", false, "storage")
 	if rows2[0].Relation != RelOther {
 		t.Errorf("non-member team-requested = %q, want other", rows2[0].Relation)

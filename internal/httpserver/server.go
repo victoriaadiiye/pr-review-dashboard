@@ -17,7 +17,8 @@ import (
 // webhook handles POST /webhook/github; pass nil to disable the route.
 // rosterSlug is the roster team's slug, used to resolve "a team you're on is
 // requested" when the queue is personalized via ?me=.
-func New(st *store.Store, assets fs.FS, runDigest func(context.Context) error, webhook http.Handler, staleHours float64, rosterSlug string) http.Handler {
+// runSync forces an immediate GitHub sync (POST /api/sync); pass nil to disable.
+func New(st *store.Store, assets fs.FS, runDigest func(context.Context) error, webhook http.Handler, staleHours float64, rosterSlug string, runSync func(context.Context) error) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/webhook/github", func(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +44,23 @@ func New(st *store.Store, assets fs.FS, runDigest func(context.Context) error, w
 		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("digest sent"))
+	})
+
+	mux.HandleFunc("/api/sync", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if runSync == nil {
+			http.Error(w, "sync not configured", http.StatusServiceUnavailable)
+			return
+		}
+		if err := runSync(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("synced"))
 	})
 
 	mux.HandleFunc("/api/leaderboard", func(w http.ResponseWriter, r *http.Request) {
